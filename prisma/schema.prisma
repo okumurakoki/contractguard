@@ -1,0 +1,319 @@
+// ContractGuard Prisma Schema
+// AI契約書レビューSaaS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// 組織管理
+// ============================================================
+
+model Organization {
+  id              String    @id @default(uuid())
+  name            String
+  planType        String    @default("lite") // lite, standard, premium, enterprise
+  industry        String?
+  employeeCount   Int?
+
+  // サブスクリプション
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  trialEndsAt          DateTime?
+  subscriptionStatus   String?  // active, canceled, past_due
+
+  // 請求
+  billingEmail    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  users           User[]
+  contracts       Contract[]
+  templates       Template[]
+  folders         Folder[]
+  consultations   LawyerConsultation[]
+  auditLogs       AuditLog[]
+
+  @@index([planType])
+}
+
+// ============================================================
+// ユーザー管理
+// ============================================================
+
+model User {
+  id             String    @id // Clerk user ID
+  organizationId String
+  email          String    @unique
+  name           String?
+  role           String    @default("editor") // admin, editor, viewer
+  authProvider   String?   // email, google, microsoft
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  uploadedContracts Contract[] @relation("UploadedBy")
+  auditLogs         AuditLog[]
+  consultations     LawyerConsultation[] @relation("RequestedBy")
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+// ============================================================
+// 契約書管理
+// ============================================================
+
+model Contract {
+  id              String    @id @default(uuid())
+  organizationId  String
+  uploadedBy      String
+
+  // ファイル情報
+  fileName        String
+  filePath        String    // S3 key
+  fileSize        Int?
+  fileType        String?
+
+  // 契約情報
+  contractType    String?
+  contractTitle   String?
+  counterparty    String?   // 取引先名
+  contractDate    DateTime?
+  expiryDate      DateTime?
+  autoRenewal     Boolean   @default(false)
+  cancellationNoticeDays Int?
+
+  // ステータス
+  status          String    @default("analyzing") // analyzing, completed, archived
+
+  // タグ・フォルダ
+  tags            String[]
+  folderId        String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedByUser  User         @relation("UploadedBy", fields: [uploadedBy], references: [id])
+  folder          Folder?      @relation(fields: [folderId], references: [id])
+
+  review          ContractReview?
+  consultations   LawyerConsultation[]
+
+  @@index([organizationId])
+  @@index([uploadedBy])
+  @@index([contractType])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([folderId])
+}
+
+// ============================================================
+// レビュー結果
+// ============================================================
+
+model ContractReview {
+  id               String   @id @default(uuid())
+  contractId       String   @unique
+
+  // 分析結果
+  riskLevel        String   // high, medium, low
+  overallScore     Int?     // 0-100
+
+  // リスク詳細（JSON）
+  risks            Json?
+
+  // チェックリスト
+  checklist        Json?
+
+  // AI使用モデル
+  aiModel          String?
+  analysisDuration Int?     // 秒
+
+  createdAt        DateTime @default(now())
+
+  contract         Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  riskItems        RiskItem[]
+
+  @@index([contractId])
+  @@index([riskLevel])
+}
+
+model RiskItem {
+  id            String   @id @default(uuid())
+  reviewId      String
+
+  riskType      String   // 損害賠償、解除条件、遅延損害金 etc.
+  riskLevel     String   // high, medium, low
+
+  // 該当箇所
+  pageNumber    Int?
+  sectionTitle  String?
+  originalText  String?  @db.Text
+
+  // 修正案
+  suggestedText String?  @db.Text
+  reason        String?  @db.Text
+  legalBasis    String?  @db.Text
+
+  // ユーザーアクション
+  userAction    String   @default("pending") // accepted, rejected, pending
+  userComment   String?  @db.Text
+
+  createdAt     DateTime @default(now())
+
+  review        ContractReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([riskLevel])
+}
+
+// ============================================================
+// テンプレート
+// ============================================================
+
+model Template {
+  id              String   @id @default(uuid())
+  organizationId  String?  // NULL = 公式テンプレート
+  createdBy       String?
+
+  title           String
+  description     String?  @db.Text
+  category        String   // 業務委託、NDA etc.
+  industry        String?  // 建設、IT etc.
+
+  content         String   @db.Text
+  variables       Json?    // 可変項目定義
+
+  isPublic        Boolean  @default(false)
+  isPremium       Boolean  @default(false)
+  price           Int?
+
+  usageCount      Int      @default(0)
+  rating          Float?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([industry])
+  @@index([isPublic])
+  @@index([isPremium])
+}
+
+// ============================================================
+// フォルダ管理
+// ============================================================
+
+model Folder {
+  id              String   @id @default(uuid())
+  organizationId  String
+  parentFolderId  String?
+
+  name            String
+  color           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parentFolder    Folder?      @relation("FolderHierarchy", fields: [parentFolderId], references: [id])
+  childFolders    Folder[]     @relation("FolderHierarchy")
+
+  contracts       Contract[]
+
+  @@index([organizationId])
+  @@index([parentFolderId])
+}
+
+// ============================================================
+// 弁護士相談
+// ============================================================
+
+model LawyerConsultation {
+  id              String    @id @default(uuid())
+  contractId      String?
+  organizationId  String
+  requestedBy     String
+
+  lawyerId        String?   // 弁護士マスタ参照（今回は省略）
+  consultationType String   // chat, video, review
+
+  status          String    @default("pending") // pending, in_progress, completed
+
+  estimatedFee    Int?
+  actualFee       Int?
+  paymentStatus   String?   // unpaid, paid, refunded
+  stripePaymentId String?
+
+  requestDetails  String?   @db.Text
+  lawyerResponse  String?   @db.Text
+
+  scheduledAt     DateTime?
+  completedAt     DateTime?
+
+  createdAt       DateTime  @default(now())
+
+  contract        Contract?      @relation(fields: [contractId], references: [id])
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedByUser User           @relation("RequestedBy", fields: [requestedBy], references: [id])
+
+  @@index([organizationId])
+  @@index([requestedBy])
+  @@index([status])
+}
+
+// ============================================================
+// 監査ログ
+// ============================================================
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  organizationId String
+  userId        String
+
+  action        String   // view, edit, delete, download
+  resourceType  String   // contract, template
+  resourceId    String
+
+  ipAddress     String?
+  userAgent     String?  @db.Text
+
+  createdAt     DateTime @default(now())
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// 招待管理
+// ============================================================
+
+model Invitation {
+  id             String   @id @default(uuid())
+  organizationId String
+  email          String
+  role           String
+  token          String   @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+
+  createdAt      DateTime @default(now())
+
+  @@index([token])
+  @@index([email])
+}
