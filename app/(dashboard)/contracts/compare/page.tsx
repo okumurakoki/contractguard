@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import {
   Box,
   Typography,
@@ -11,308 +11,261 @@ import {
   Chip,
   Divider,
   CircularProgress,
+  Alert,
+  Skeleton,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
-  Check as CheckIcon,
-  Close as CloseIcon,
-  Info as InfoIcon,
+  CheckCircle as CheckIcon,
+  Warning as WarningIcon,
+  Error as ErrorIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 
 interface ContractData {
   id: string;
-  name: string;
-  type: string;
-  uploadDate: string;
-  sections: Section[];
+  fileName: string;
+  contractTitle: string | null;
+  contractType: string | null;
+  counterparty: string | null;
+  createdAt: string;
+  expiryDate: string | null;
+  status: string;
+  tags: string[];
+  review?: {
+    riskLevel: string | null;
+    overallScore: number | null;
+  } | null;
 }
-
-interface Section {
-  number: number;
-  title: string;
-  content: string;
-}
-
-interface Difference {
-  section: number;
-  title: string;
-  type: 'added' | 'removed' | 'modified' | 'same';
-  contract1Content?: string;
-  contract2Content?: string;
-}
-
-const mockContracts: Record<string, ContractData> = {
-  '1': {
-    id: '1',
-    name: '業務委託契約書_ABC社',
-    type: '業務委託契約',
-    uploadDate: '2024-01-15',
-    sections: [
-      { number: 1, title: '業務内容', content: '甲は、乙に対し、Webアプリケーション開発業務を委託し、乙はこれを受託する。' },
-      { number: 2, title: '契約期間', content: '本契約の有効期間は、2024年1月1日から2025年12月31日までとする。' },
-      { number: 3, title: '報酬', content: '甲は乙に対し、業務の対価として、月額50万円を支払う。' },
-      { number: 4, title: '秘密保持', content: '甲および乙は、本契約の履行により知り得た相手方の秘密情報を第三者に開示してはならない。' },
-      { number: 5, title: '損害賠償', content: '甲または乙が本契約に違反し、相手方に損害を与えた場合、その損害を賠償する。上限額は契約金額の100%とする。' },
-    ],
-  },
-  '2': {
-    id: '2',
-    name: '秘密保持契約_XYZ社',
-    type: '秘密保持契約',
-    uploadDate: '2024-01-14',
-    sections: [
-      { number: 1, title: '目的', content: '本契約は、両当事者間の秘密情報の保護を目的とする。' },
-      { number: 2, title: '秘密情報の定義', content: '秘密情報とは、書面、口頭、電磁的記録その他の媒体により開示される一切の情報をいう。' },
-      { number: 3, title: '秘密保持義務', content: '受領者は、秘密情報を厳に秘密として保持し、開示者の事前の書面による承諾なく第三者に開示してはならない。' },
-      { number: 4, title: '契約期間', content: '本契約の有効期間は、締結日から3年間とする。' },
-      { number: 5, title: '損害賠償', content: '秘密保持義務に違反した場合、違反者は相手方に生じた一切の損害を賠償する責任を負う。' },
-    ],
-  },
-  '3': {
-    id: '3',
-    name: '売買契約書_DEF社',
-    type: '売買契約',
-    uploadDate: '2024-01-13',
-    sections: [
-      { number: 1, title: '売買の目的物', content: 'ソフトウェアライセンスの販売' },
-      { number: 2, title: '売買代金', content: '300万円' },
-      { number: 3, title: '支払条件', content: '契約締結後30日以内に全額を支払う。' },
-      { number: 4, title: '納品', content: '代金受領後7営業日以内に納品する。' },
-      { number: 5, title: '損害賠償', content: '甲または乙が本契約に違反し、相手方に損害を与えた場合、その損害を賠償する。' },
-    ],
-  },
-};
 
 function CompareContent() {
   const searchParams = useSearchParams();
   const ids = searchParams.get('ids')?.split(',') || [];
+  const [contracts, setContracts] = React.useState<(ContractData | null)[]>([null, null]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchContracts = async () => {
+      if (ids.length !== 2) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const responses = await Promise.all(
+          ids.map((id) => fetch(`/api/contracts/${id}`))
+        );
+
+        const data = await Promise.all(
+          responses.map(async (res) => {
+            if (!res.ok) return null;
+            const json = await res.json();
+            return json.contract;
+          })
+        );
+
+        setContracts(data);
+      } catch (err) {
+        setError('契約書の取得に失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContracts();
+  }, [ids.join(',')]);
 
   if (ids.length !== 2) {
     return (
-      <Box>
-        <Typography variant="h5" fontWeight={700}>
-          比較する契約書を2つ選択してください
-        </Typography>
-      </Box>
+      <Alert severity="info">
+        比較する契約書を2つ選択してください。契約書一覧ページの「比較モード」から選択できます。
+      </Alert>
     );
   }
 
-  const contract1 = mockContracts[ids[0]];
-  const contract2 = mockContracts[ids[1]];
+  if (loading) {
+    return (
+      <Paper sx={{ p: 3, border: '1px solid', borderColor: 'grey.200' }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+          {[0, 1].map((i) => (
+            <Box key={i}>
+              <Skeleton variant="text" width={100} height={20} />
+              <Skeleton variant="text" width="80%" height={32} />
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                <Skeleton variant="rectangular" width={80} height={24} />
+                <Skeleton variant="rectangular" width={100} height={24} />
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      </Paper>
+    );
+  }
+
+  if (error) {
+    return <Alert severity="error">{error}</Alert>;
+  }
+
+  const [contract1, contract2] = contracts;
 
   if (!contract1 || !contract2) {
-    return (
-      <Box>
-        <Typography variant="h5" fontWeight={700}>
-          契約書が見つかりません
-        </Typography>
-      </Box>
-    );
+    return <Alert severity="error">契約書が見つかりません</Alert>;
   }
 
-  // 差分を計算
-  const differences: Difference[] = [];
-  const allSectionNumbers = new Set([
-    ...contract1.sections.map((s) => s.number),
-    ...contract2.sections.map((s) => s.number),
-  ]);
-
-  Array.from(allSectionNumbers)
-    .sort((a, b) => a - b)
-    .forEach((sectionNum) => {
-      const section1 = contract1.sections.find((s) => s.number === sectionNum);
-      const section2 = contract2.sections.find((s) => s.number === sectionNum);
-
-      if (section1 && section2) {
-        if (section1.content === section2.content && section1.title === section2.title) {
-          differences.push({
-            section: sectionNum,
-            title: section1.title,
-            type: 'same',
-            contract1Content: section1.content,
-            contract2Content: section2.content,
-          });
-        } else {
-          differences.push({
-            section: sectionNum,
-            title: section1.title,
-            type: 'modified',
-            contract1Content: section1.content,
-            contract2Content: section2.content,
-          });
-        }
-      } else if (section1) {
-        differences.push({
-          section: sectionNum,
-          title: section1.title,
-          type: 'removed',
-          contract1Content: section1.content,
-        });
-      } else if (section2) {
-        differences.push({
-          section: sectionNum,
-          title: section2.title,
-          type: 'added',
-          contract2Content: section2.content,
-        });
-      }
-    });
-
-  const getDiffIcon = (type: string) => {
-    switch (type) {
-      case 'added':
+  const getRiskIcon = (level: string | null) => {
+    switch (level) {
+      case 'high':
+        return <ErrorIcon sx={{ color: 'error.main', fontSize: 20 }} />;
+      case 'medium':
+        return <WarningIcon sx={{ color: 'warning.main', fontSize: 20 }} />;
+      case 'low':
         return <CheckIcon sx={{ color: 'success.main', fontSize: 20 }} />;
-      case 'removed':
-        return <CloseIcon sx={{ color: 'error.main', fontSize: 20 }} />;
-      case 'modified':
-        return <InfoIcon sx={{ color: 'warning.main', fontSize: 20 }} />;
       default:
-        return <CheckIcon sx={{ color: 'grey.400', fontSize: 20 }} />;
+        return null;
     }
   };
 
-  const getDiffLabel = (type: string) => {
-    switch (type) {
-      case 'added':
-        return { label: '追加', color: 'success' as const };
-      case 'removed':
-        return { label: '削除', color: 'error' as const };
-      case 'modified':
-        return { label: '変更', color: 'warning' as const };
+  const getRiskLabel = (level: string | null) => {
+    switch (level) {
+      case 'high':
+        return { label: '高リスク', color: 'error' as const };
+      case 'medium':
+        return { label: '中リスク', color: 'warning' as const };
+      case 'low':
+        return { label: '低リスク', color: 'success' as const };
       default:
-        return { label: '同一', color: 'default' as const };
+        return { label: '未分析', color: 'default' as const };
     }
   };
 
-  const diffCount = {
-    added: differences.filter((d) => d.type === 'added').length,
-    removed: differences.filter((d) => d.type === 'removed').length,
-    modified: differences.filter((d) => d.type === 'modified').length,
-    same: differences.filter((d) => d.type === 'same').length,
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('ja-JP');
   };
+
+  const renderContractCard = (contract: ContractData, label: string) => {
+    const riskConfig = getRiskLabel(contract.review?.riskLevel || null);
+    return (
+      <Box>
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          {label}
+        </Typography>
+        <Typography variant="h6" fontWeight={700} gutterBottom>
+          {contract.contractTitle || contract.fileName}
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+          <Chip label={contract.contractType || '未分類'} size="small" />
+          <Chip label={formatDate(contract.createdAt)} size="small" variant="outlined" />
+          <Chip
+            label={riskConfig.label}
+            color={riskConfig.color}
+            size="small"
+            icon={getRiskIcon(contract.review?.riskLevel || null) || undefined}
+          />
+        </Box>
+        {contract.counterparty && (
+          <Typography variant="body2" color="text.secondary">
+            取引先: {contract.counterparty}
+          </Typography>
+        )}
+        {contract.review?.overallScore !== null && contract.review?.overallScore !== undefined && (
+          <Typography variant="body2" color="text.secondary">
+            リスクスコア: {contract.review.overallScore}点
+          </Typography>
+        )}
+      </Box>
+    );
+  };
+
+  // 比較項目
+  const compareItems = [
+    {
+      label: '契約種類',
+      value1: contract1.contractType || '未設定',
+      value2: contract2.contractType || '未設定',
+    },
+    {
+      label: '取引先',
+      value1: contract1.counterparty || '未設定',
+      value2: contract2.counterparty || '未設定',
+    },
+    {
+      label: 'アップロード日',
+      value1: formatDate(contract1.createdAt),
+      value2: formatDate(contract2.createdAt),
+    },
+    {
+      label: '有効期限',
+      value1: contract1.expiryDate ? formatDate(contract1.expiryDate) : '未設定',
+      value2: contract2.expiryDate ? formatDate(contract2.expiryDate) : '未設定',
+    },
+    {
+      label: 'リスクレベル',
+      value1: getRiskLabel(contract1.review?.riskLevel || null).label,
+      value2: getRiskLabel(contract2.review?.riskLevel || null).label,
+    },
+    {
+      label: 'リスクスコア',
+      value1: contract1.review?.overallScore !== null ? `${contract1.review?.overallScore}点` : '未分析',
+      value2: contract2.review?.overallScore !== null ? `${contract2.review?.overallScore}点` : '未分析',
+    },
+  ];
 
   return (
     <>
       {/* サマリー */}
       <Paper sx={{ p: 3, mb: 3, border: '1px solid', borderColor: 'grey.200' }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
-          <Box>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              契約書 A
-            </Typography>
-            <Typography variant="h6" fontWeight={700} gutterBottom>
-              {contract1.name}
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Chip label={contract1.type} size="small" />
-              <Chip label={contract1.uploadDate} size="small" variant="outlined" />
-            </Box>
-          </Box>
-          <Box>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              契約書 B
-            </Typography>
-            <Typography variant="h6" fontWeight={700} gutterBottom>
-              {contract2.name}
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Chip label={contract2.type} size="small" />
-              <Chip label={contract2.uploadDate} size="small" variant="outlined" />
-            </Box>
-          </Box>
-        </Box>
-
-        <Divider sx={{ my: 3 }} />
-
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          <Chip label={`同一: ${diffCount.same}件`} size="small" variant="outlined" />
-          <Chip label={`変更: ${diffCount.modified}件`} color="warning" size="small" />
-          <Chip label={`追加: ${diffCount.added}件`} color="success" size="small" />
-          <Chip label={`削除: ${diffCount.removed}件`} color="error" size="small" />
+          {renderContractCard(contract1, '契約書 A')}
+          {renderContractCard(contract2, '契約書 B')}
         </Box>
       </Paper>
 
-      {/* 差分リスト */}
+      {/* 比較テーブル */}
       <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
-        条項ごとの比較 ({differences.length}件)
+        基本情報の比較
       </Typography>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {differences.map((diff) => {
-          const { label, color } = getDiffLabel(diff.type);
-          return (
-            <Paper
-              key={diff.section}
-              sx={{
-                border: '1px solid',
-                borderColor: diff.type === 'same' ? 'grey.200' : `${color}.main`,
-                borderLeft: '4px solid',
-                borderLeftColor: diff.type === 'same' ? 'grey.200' : `${color}.main`,
-              }}
-            >
-              <Box sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                  {getDiffIcon(diff.type)}
-                  <Chip label={`第${diff.section}条`} size="small" sx={{ bgcolor: 'black', color: 'white', fontWeight: 700 }} />
-                  <Typography variant="h6" fontWeight={700}>
-                    {diff.title}
-                  </Typography>
-                  <Chip label={label} color={color} size="small" sx={{ ml: 'auto' }} />
-                </Box>
+      <Paper sx={{ border: '1px solid', borderColor: 'grey.200', mb: 3 }}>
+        {compareItems.map((item, index) => (
+          <Box key={item.label}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', p: 2 }}>
+              <Typography variant="body2" fontWeight={600} color="text.secondary">
+                {item.label}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  bgcolor: item.value1 !== item.value2 ? 'warning.50' : 'transparent',
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                }}
+              >
+                {item.value1}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  bgcolor: item.value1 !== item.value2 ? 'warning.50' : 'transparent',
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                }}
+              >
+                {item.value2}
+              </Typography>
+            </Box>
+            {index < compareItems.length - 1 && <Divider />}
+          </Box>
+        ))}
+      </Paper>
 
-                {diff.type === 'same' && (
-                  <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
-                    <Typography variant="body2">{diff.contract1Content}</Typography>
-                  </Box>
-                )}
-
-                {diff.type === 'modified' && (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                    <Box>
-                      <Typography variant="caption" fontWeight={600} color="text.secondary" gutterBottom>
-                        契約書 A
-                      </Typography>
-                      <Box sx={{ bgcolor: 'error.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'error.200' }}>
-                        <Typography variant="body2">{diff.contract1Content}</Typography>
-                      </Box>
-                    </Box>
-                    <Box>
-                      <Typography variant="caption" fontWeight={600} color="text.secondary" gutterBottom>
-                        契約書 B
-                      </Typography>
-                      <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'success.200' }}>
-                        <Typography variant="body2">{diff.contract2Content}</Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                )}
-
-                {diff.type === 'added' && (
-                  <Box>
-                    <Typography variant="caption" fontWeight={600} color="text.secondary" gutterBottom>
-                      契約書 B のみに存在
-                    </Typography>
-                    <Box sx={{ bgcolor: 'success.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'success.200' }}>
-                      <Typography variant="body2">{diff.contract2Content}</Typography>
-                    </Box>
-                  </Box>
-                )}
-
-                {diff.type === 'removed' && (
-                  <Box>
-                    <Typography variant="caption" fontWeight={600} color="text.secondary" gutterBottom>
-                      契約書 A のみに存在
-                    </Typography>
-                    <Box sx={{ bgcolor: 'error.50', p: 2, borderRadius: 1, border: '1px solid', borderColor: 'error.200' }}>
-                      <Typography variant="body2">{diff.contract1Content}</Typography>
-                    </Box>
-                  </Box>
-                )}
-              </Box>
-            </Paper>
-          );
-        })}
-      </Box>
+      {/* 詳細比較の案内 */}
+      <Alert severity="info">
+        詳細な条項ごとの比較機能は今後のアップデートで追加予定です。
+        現在は基本情報の比較のみ対応しています。
+      </Alert>
     </>
   );
 }
@@ -329,7 +282,7 @@ export default function ComparePage() {
           契約書比較
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          2つの契約書の内容を比較して差分を確認
+          2つの契約書の情報を比較
         </Typography>
       </Box>
 
