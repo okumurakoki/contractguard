@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Box,
   Typography,
@@ -15,6 +16,7 @@ import {
   LinearProgress,
   Chip,
   IconButton,
+  Skeleton,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -29,13 +31,41 @@ interface UploadFile {
   contractType: string;
 }
 
+interface Folder {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
 export default function UploadPage() {
+  const router = useRouter();
   const [selectedFiles, setSelectedFiles] = React.useState<UploadFile[]>([]);
   const [folderId, setFolderId] = React.useState('');
+  const [folders, setFolders] = React.useState<Folder[]>([]);
+  const [foldersLoading, setFoldersLoading] = React.useState(true);
   const [uploading, setUploading] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState(0);
   const [error, setError] = React.useState('');
   const [success, setSuccess] = React.useState('');
+
+  // フォルダ一覧を取得
+  React.useEffect(() => {
+    const fetchFolders = async () => {
+      try {
+        const response = await fetch('/api/folders');
+        if (response.ok) {
+          const data = await response.json();
+          setFolders(data.folders);
+        }
+      } catch (err) {
+        console.error('Failed to fetch folders:', err);
+      } finally {
+        setFoldersLoading(false);
+      }
+    };
+
+    fetchFolders();
+  }, []);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -142,16 +172,35 @@ export default function UploadPage() {
     setSuccess('');
 
     try {
-      // TODO: S3アップロード処理を実装
       const totalFiles = selectedFiles.length;
+      const uploadedContractIds: string[] = [];
 
       for (let i = 0; i < totalFiles; i++) {
+        const uploadFile = selectedFiles[i];
+        const formData = new FormData();
+        formData.append('file', uploadFile.file);
+        formData.append('contractName', uploadFile.contractName);
+        formData.append('contractType', uploadFile.contractType);
+        if (folderId) {
+          formData.append('folderId', folderId);
+        }
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'アップロードに失敗しました');
+        }
+
+        const data = await response.json();
+        uploadedContractIds.push(data.contract.id);
+
         const progress = Math.round(((i + 1) / totalFiles) * 100);
         setUploadProgress(progress);
-        await new Promise((resolve) => setTimeout(resolve, 500));
       }
-
-      setSuccess(`${totalFiles}件の契約書のアップロードが完了しました`);
 
       // Clean up preview URLs
       selectedFiles.forEach((f) => URL.revokeObjectURL(f.previewUrl));
@@ -159,8 +208,21 @@ export default function UploadPage() {
       setSelectedFiles([]);
       setFolderId('');
       setUploadProgress(0);
+
+      // 1件のみの場合は詳細ページへ遷移、複数の場合は一覧ページへ
+      if (uploadedContractIds.length === 1) {
+        setSuccess('契約書のアップロードが完了しました。AI分析を開始します。');
+        setTimeout(() => {
+          router.push(`/contracts/${uploadedContractIds[0]}`);
+        }, 1500);
+      } else {
+        setSuccess(`${totalFiles}件の契約書のアップロードが完了しました。`);
+        setTimeout(() => {
+          router.push('/contracts');
+        }, 1500);
+      }
     } catch (err) {
-      setError('アップロードに失敗しました');
+      setError(err instanceof Error ? err.message : 'アップロードに失敗しました');
     } finally {
       setUploading(false);
     }
@@ -367,9 +429,17 @@ export default function UploadPage() {
               <InputLabel>フォルダ（任意）</InputLabel>
               <Select value={folderId} onChange={(e) => setFolderId(e.target.value)} label="フォルダ（任意）">
                 <MenuItem value="">未分類</MenuItem>
-                <MenuItem value="folder1">2024年度契約</MenuItem>
-                <MenuItem value="folder2">継続契約</MenuItem>
-                <MenuItem value="folder3">新規案件</MenuItem>
+                {foldersLoading ? (
+                  <MenuItem disabled>
+                    <Skeleton width={100} />
+                  </MenuItem>
+                ) : (
+                  folders.map((folder) => (
+                    <MenuItem key={folder.id} value={folder.id}>
+                      {folder.name}
+                    </MenuItem>
+                  ))
+                )}
               </Select>
             </FormControl>
           </Box>

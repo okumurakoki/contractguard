@@ -1,6 +1,8 @@
 'use client';
 
 import * as React from 'react';
+import { useUser } from '@clerk/nextjs';
+import Link from 'next/link';
 import {
   Box,
   Typography,
@@ -17,6 +19,7 @@ import {
   Switch,
   Chip,
   Alert,
+  Skeleton,
 } from '@mui/material';
 import {
   Person as PersonIcon,
@@ -41,30 +44,53 @@ function TabPanel(props: TabPanelProps) {
 }
 
 export default function SettingsPage() {
+  const { user, isLoaded } = useUser();
   const [tabValue, setTabValue] = React.useState(0);
   const [success, setSuccess] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
 
-  // プロフィール設定
-  const [name, setName] = React.useState('山田太郎');
-  const [email, setEmail] = React.useState('yamada@example.com');
-  const [phone, setPhone] = React.useState('090-1234-5678');
+  // プロフィール設定 - Clerkユーザーデータで初期化
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [phone, setPhone] = React.useState('');
 
   // 組織設定
-  const [orgName, setOrgName] = React.useState('株式会社サンプル');
-  const [orgPostalCode, setOrgPostalCode] = React.useState('150-0001');
-  const [orgAddress, setOrgAddress] = React.useState('東京都渋谷区神宮前1-1-1');
-  const [orgPhone, setOrgPhone] = React.useState('03-1234-5678');
-  const [orgEmail, setOrgEmail] = React.useState('info@example.com');
-  const [orgRepresentative, setOrgRepresentative] = React.useState('山田太郎');
-  const [orgWebsite, setOrgWebsite] = React.useState('https://example.com');
+  const [orgName, setOrgName] = React.useState('');
+  const [orgPostalCode, setOrgPostalCode] = React.useState('');
+  const [orgAddress, setOrgAddress] = React.useState('');
+  const [orgPhone, setOrgPhone] = React.useState('');
+  const [orgEmail, setOrgEmail] = React.useState('');
+  const [orgRepresentative, setOrgRepresentative] = React.useState('');
+  const [orgWebsite, setOrgWebsite] = React.useState('');
 
   // 通知設定
   const [emailNotif, setEmailNotif] = React.useState(true);
   const [riskAlertNotif, setRiskAlertNotif] = React.useState(true);
   const [weeklyReportNotif, setWeeklyReportNotif] = React.useState(false);
 
-  const handleSaveProfile = () => {
-    setSuccess('プロフィールを更新しました');
+  // Clerkユーザーデータを反映
+  React.useEffect(() => {
+    if (isLoaded && user) {
+      setName(user.fullName || '');
+      setEmail(user.primaryEmailAddress?.emailAddress || '');
+      setPhone(user.primaryPhoneNumber?.phoneNumber || '');
+    }
+  }, [isLoaded, user]);
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      await user.update({
+        firstName: name.split(' ')[0] || name,
+        lastName: name.split(' ').slice(1).join(' ') || '',
+      });
+      setSuccess('プロフィールを更新しました');
+    } catch {
+      setSuccess('プロフィールの更新に失敗しました');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveOrganization = () => {
@@ -111,27 +137,34 @@ export default function SettingsPage() {
         {/* プロフィール */}
         <TabPanel value={tabValue} index={0}>
           <Box sx={{ maxWidth: 600, mx: 'auto' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 4 }}>
-              <Avatar
-                sx={{
-                  width: 80,
-                  height: 80,
-                  bgcolor: 'black',
-                  fontSize: '2rem',
-                  fontWeight: 600,
-                }}
-              >
-                {name.charAt(0)}
-              </Avatar>
-              <Box>
-                <Button variant="outlined" size="small" sx={{ borderColor: 'grey.300', color: 'black', mr: 1 }}>
-                  画像を変更
-                </Button>
-                <Button size="small" sx={{ color: 'error.main' }}>
-                  削除
-                </Button>
+            {!isLoaded ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 4 }}>
+                <Skeleton variant="circular" width={80} height={80} />
+                <Box>
+                  <Skeleton variant="text" width={100} height={32} />
+                </Box>
               </Box>
-            </Box>
+            ) : (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 4 }}>
+                <Avatar
+                  src={user?.imageUrl}
+                  sx={{
+                    width: 80,
+                    height: 80,
+                    bgcolor: 'black',
+                    fontSize: '2rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  {name.charAt(0)}
+                </Avatar>
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    プロフィール画像の変更はClerkダッシュボードから行えます
+                  </Typography>
+                </Box>
+              </Box>
+            )}
 
             <Box sx={{ display: 'grid', gap: 3 }}>
               <TextField label="氏名" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
@@ -156,6 +189,7 @@ export default function SettingsPage() {
               <Button
                 variant="contained"
                 onClick={handleSaveProfile}
+                disabled={saving}
                 sx={{
                   bgcolor: 'black',
                   color: 'white',
@@ -163,7 +197,7 @@ export default function SettingsPage() {
                   '&:hover': { bgcolor: 'grey.800' },
                 }}
               >
-                保存
+                {saving ? '保存中...' : '保存'}
               </Button>
             </Box>
           </Box>
@@ -215,13 +249,15 @@ export default function SettingsPage() {
                     現在のプラン
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Chip label="Liteプラン" sx={{ bgcolor: 'grey.100', fontWeight: 600 }} />
+                    <Chip label="Free プラン" sx={{ bgcolor: 'grey.100', fontWeight: 600 }} />
                     <Typography variant="body2" color="text.secondary">
-                      ¥5,000/月
+                      無料
                     </Typography>
                   </Box>
                 </Box>
                 <Button
+                  component={Link}
+                  href="/settings/billing"
                   variant="outlined"
                   sx={{ borderColor: 'grey.300', color: 'black' }}
                 >
@@ -233,62 +269,34 @@ export default function SettingsPage() {
 
               <List disablePadding>
                 <ListItem sx={{ px: 0 }}>
-                  <ListItemText primary="契約書レビュー" secondary="月20件まで" />
+                  <ListItemText primary="契約書レビュー" secondary="月10件まで" />
                 </ListItem>
                 <ListItem sx={{ px: 0 }}>
-                  <ListItemText primary="ストレージ" secondary="10GB" />
+                  <ListItemText primary="ストレージ" secondary="1GB" />
                 </ListItem>
                 <ListItem sx={{ px: 0 }}>
-                  <ListItemText primary="チームメンバー" secondary="5人まで" />
+                  <ListItemText primary="チームメンバー" secondary="1人まで" />
                 </ListItem>
               </List>
             </Paper>
 
-            <Typography variant="h6" fontWeight={700} gutterBottom>
-              お支払い方法
-            </Typography>
-            <Paper sx={{ p: 3, border: '1px solid', borderColor: 'grey.200', mt: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Box>
-                  <Typography variant="body2" fontWeight={600}>
-                    クレジットカード
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    **** **** **** 1234
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    有効期限: 12/25
-                  </Typography>
-                </Box>
-                <Button size="small" sx={{ color: 'grey.700' }}>
-                  変更
-                </Button>
-              </Box>
-            </Paper>
+            <Alert severity="info" sx={{ mb: 3 }}>
+              より多くの契約書をレビューするには、プランをアップグレードしてください。
+            </Alert>
 
-            <Typography variant="h6" fontWeight={700} sx={{ mt: 4, mb: 2 }}>
-              請求履歴
-            </Typography>
-            <List sx={{ border: '1px solid', borderColor: 'grey.200', borderRadius: 1 }}>
-              <ListItem sx={{ borderBottom: '1px solid', borderColor: 'grey.200' }}>
-                <ListItemText primary="2024年1月" secondary="¥5,000" />
-                <Button size="small" sx={{ color: 'grey.700' }}>
-                  ダウンロード
-                </Button>
-              </ListItem>
-              <ListItem sx={{ borderBottom: '1px solid', borderColor: 'grey.200' }}>
-                <ListItemText primary="2023年12月" secondary="¥5,000" />
-                <Button size="small" sx={{ color: 'grey.700' }}>
-                  ダウンロード
-                </Button>
-              </ListItem>
-              <ListItem>
-                <ListItemText primary="2023年11月" secondary="¥5,000" />
-                <Button size="small" sx={{ color: 'grey.700' }}>
-                  ダウンロード
-                </Button>
-              </ListItem>
-            </List>
+            <Button
+              component={Link}
+              href="/settings/billing"
+              variant="contained"
+              fullWidth
+              sx={{
+                bgcolor: 'black',
+                color: 'white',
+                '&:hover': { bgcolor: 'grey.800' },
+              }}
+            >
+              料金プランと請求設定を見る
+            </Button>
           </Box>
         </TabPanel>
 

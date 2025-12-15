@@ -12,13 +12,13 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Grid,
   Card,
   CardContent,
   CardActions,
   Menu,
   MenuItem,
-  Chip,
+  Skeleton,
+  Alert,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -35,66 +35,63 @@ import Link from 'next/link';
 interface Folder {
   id: string;
   name: string;
-  description: string;
-  contractCount: number;
+  color: string | null;
   createdAt: string;
-  color: string;
+  _count: {
+    contracts: number;
+    childFolders: number;
+  };
 }
 
-const mockFolders: Folder[] = [
-  {
-    id: '1',
-    name: '2024年度契約',
-    description: '2024年に締結した契約書を管理',
-    contractCount: 12,
-    createdAt: '2024-01-01',
-    color: '#000000',
-  },
-  {
-    id: '2',
-    name: '継続契約',
-    description: '定期的に更新が必要な契約書',
-    contractCount: 8,
-    createdAt: '2024-01-10',
-    color: '#424242',
-  },
-  {
-    id: '3',
-    name: '新規案件',
-    description: '新規取引先との契約書',
-    contractCount: 5,
-    createdAt: '2024-01-15',
-    color: '#616161',
-  },
-  {
-    id: '4',
-    name: '重要契約',
-    description: '金額が大きい・重要度が高い契約',
-    contractCount: 3,
-    createdAt: '2024-01-20',
-    color: '#757575',
-  },
-];
-
 export default function FoldersPage() {
-  const [folders, setFolders] = React.useState<Folder[]>(mockFolders);
+  const [folders, setFolders] = React.useState<Folder[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [uncategorizedCount, setUncategorizedCount] = React.useState(0);
   const [openDialog, setOpenDialog] = React.useState(false);
   const [editingFolder, setEditingFolder] = React.useState<Folder | null>(null);
   const [folderName, setFolderName] = React.useState('');
-  const [folderDescription, setFolderDescription] = React.useState('');
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [selectedFolder, setSelectedFolder] = React.useState<Folder | null>(null);
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid');
+  const [saving, setSaving] = React.useState(false);
+
+  // フォルダ一覧を取得
+  const fetchFolders = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch('/api/folders');
+      if (!response.ok) {
+        throw new Error('フォルダの取得に失敗しました');
+      }
+      const data = await response.json();
+      setFolders(data.folders);
+
+      // 未分類の契約書数を取得
+      const contractsResponse = await fetch('/api/contracts?folderId=null');
+      if (contractsResponse.ok) {
+        const contractsData = await contractsResponse.json();
+        setUncategorizedCount(contractsData.contracts.filter((c: { folderId: string | null }) => !c.folderId).length);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchFolders();
+  }, [fetchFolders]);
 
   const handleOpenDialog = (folder?: Folder) => {
     if (folder) {
       setEditingFolder(folder);
       setFolderName(folder.name);
-      setFolderDescription(folder.description);
     } else {
       setEditingFolder(null);
       setFolderName('');
-      setFolderDescription('');
     }
     setOpenDialog(true);
   };
@@ -103,32 +100,36 @@ export default function FoldersPage() {
     setOpenDialog(false);
     setEditingFolder(null);
     setFolderName('');
-    setFolderDescription('');
   };
 
-  const handleSaveFolder = () => {
+  const handleSaveFolder = async () => {
     if (!folderName.trim()) return;
 
-    if (editingFolder) {
-      setFolders(
-        folders.map((f) =>
-          f.id === editingFolder.id
-            ? { ...f, name: folderName, description: folderDescription }
-            : f
-        )
-      );
-    } else {
-      const newFolder: Folder = {
-        id: String(folders.length + 1),
-        name: folderName,
-        description: folderDescription,
-        contractCount: 0,
-        createdAt: new Date().toISOString().split('T')[0],
-        color: '#000000',
-      };
-      setFolders([...folders, newFolder]);
+    setSaving(true);
+    try {
+      if (editingFolder) {
+        // 編集 - APIエンドポイントを作成する必要があるが、とりあえずPOSTで対応
+        const response = await fetch(`/api/folders/${editingFolder.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: folderName }),
+        });
+        if (!response.ok) throw new Error('更新に失敗しました');
+      } else {
+        const response = await fetch('/api/folders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: folderName }),
+        });
+        if (!response.ok) throw new Error('作成に失敗しました');
+      }
+      await fetchFolders();
+      handleCloseDialog();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+    } finally {
+      setSaving(false);
     }
-    handleCloseDialog();
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, folder: Folder) => {
@@ -150,9 +151,17 @@ export default function FoldersPage() {
     handleMenuClose();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedFolder) {
-      setFolders(folders.filter((f) => f.id !== selectedFolder.id));
+      try {
+        const response = await fetch(`/api/folders/${selectedFolder.id}`, {
+          method: 'DELETE',
+        });
+        if (!response.ok) throw new Error('削除に失敗しました');
+        await fetchFolders();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '削除に失敗しました');
+      }
     }
     handleMenuClose();
   };
@@ -210,7 +219,31 @@ export default function FoldersPage() {
         </Box>
       </Box>
 
-      {viewMode === 'grid' ? (
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      {loading ? (
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' },
+            gap: 3,
+          }}
+        >
+          {[1, 2, 3].map((i) => (
+            <Card key={i} sx={{ border: '1px solid', borderColor: 'grey.200' }}>
+              <CardContent>
+                <Skeleton variant="rectangular" width={48} height={48} sx={{ borderRadius: 1.5, mb: 2 }} />
+                <Skeleton variant="text" width="60%" height={28} />
+                <Skeleton variant="text" width="40%" height={20} />
+              </CardContent>
+            </Card>
+          ))}
+        </Box>
+      ) : viewMode === 'grid' ? (
         <Box
           sx={{
             display: 'grid',
@@ -248,7 +281,7 @@ export default function FoldersPage() {
                       width: 48,
                       height: 48,
                       borderRadius: 1.5,
-                      bgcolor: folder.color,
+                      bgcolor: folder.color || '#000000',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -268,21 +301,18 @@ export default function FoldersPage() {
                 <Typography variant="h6" fontWeight={700} gutterBottom>
                   {folder.name}
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, minHeight: 40 }}>
-                  {folder.description}
-                </Typography>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
                   <FileIcon sx={{ fontSize: 18, color: 'grey.500' }} />
                   <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                    {folder.contractCount}件の契約書
+                    {folder._count.contracts}件の契約書
                   </Typography>
                 </Box>
               </CardContent>
 
               <CardActions sx={{ px: 2, pb: 2 }}>
                 <Typography variant="caption" color="text.secondary">
-                  作成日: {folder.createdAt}
+                  作成日: {new Date(folder.createdAt).toLocaleDateString('ja-JP')}
                 </Typography>
               </CardActions>
             </Card>
@@ -327,14 +357,14 @@ export default function FoldersPage() {
               <Typography variant="h6" fontWeight={700} gutterBottom>
                 未分類
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, minHeight: 40 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 フォルダに分類されていない契約書
               </Typography>
 
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <FileIcon sx={{ fontSize: 18, color: 'grey.500' }} />
                 <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                  4件の契約書
+                  {uncategorizedCount}件の契約書
                 </Typography>
               </Box>
             </CardContent>
@@ -365,7 +395,7 @@ export default function FoldersPage() {
                     width: 48,
                     height: 48,
                     borderRadius: 1,
-                    bgcolor: folder.color,
+                    bgcolor: folder.color || '#000000',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -385,28 +415,15 @@ export default function FoldersPage() {
                     </IconButton>
                   </Box>
 
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{
-                      mb: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {folder.description}
-                  </Typography>
-
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <FileIcon sx={{ fontSize: 16, color: 'grey.500' }} />
                       <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                        {folder.contractCount}件の契約書
+                        {folder._count.contracts}件の契約書
                       </Typography>
                     </Box>
                     <Typography variant="caption" color="text.secondary">
-                      作成日: {folder.createdAt}
+                      作成日: {new Date(folder.createdAt).toLocaleDateString('ja-JP')}
                     </Typography>
                   </Box>
                 </Box>
@@ -454,7 +471,7 @@ export default function FoldersPage() {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <FileIcon sx={{ fontSize: 16, color: 'grey.500' }} />
                   <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                    4件の契約書
+                    {uncategorizedCount}件の契約書
                   </Typography>
                 </Box>
               </Box>
@@ -491,32 +508,23 @@ export default function FoldersPage() {
               placeholder="例：2024年度契約"
               autoFocus
             />
-            <TextField
-              label="説明（任意）"
-              fullWidth
-              multiline
-              rows={3}
-              value={folderDescription}
-              onChange={(e) => setFolderDescription(e.target.value)}
-              placeholder="フォルダの用途や内容を説明"
-            />
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={handleCloseDialog} sx={{ color: 'grey.600' }}>
+          <Button onClick={handleCloseDialog} sx={{ color: 'grey.600' }} disabled={saving}>
             キャンセル
           </Button>
           <Button
             onClick={handleSaveFolder}
             variant="contained"
-            disabled={!folderName.trim()}
+            disabled={!folderName.trim() || saving}
             sx={{
               bgcolor: 'black',
               color: 'white',
               '&:hover': { bgcolor: 'grey.800' },
             }}
           >
-            {editingFolder ? '更新' : '作成'}
+            {saving ? '保存中...' : editingFolder ? '更新' : '作成'}
           </Button>
         </DialogActions>
       </Dialog>

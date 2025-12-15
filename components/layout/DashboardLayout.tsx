@@ -111,7 +111,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     handleClose();
   };
 
-  const handleSearch = (query: string) => {
+  const handleSearch = React.useCallback(async (query: string) => {
     setSearchQuery(query);
 
     if (!query.trim()) {
@@ -119,19 +119,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       return;
     }
 
-    const mockData: SearchResult[] = [
-      { id: '1', title: '業務委託契約書_ABC社', type: 'contract', subtitle: '業務委託契約', path: '/contracts/1' },
-      { id: '2', title: '秘密保持契約_XYZ社', type: 'contract', subtitle: '秘密保持契約', path: '/contracts/2' },
-      { id: '3', title: '2024年度契約', type: 'folder', subtitle: '12件の契約書', path: '/folders/1' },
-      { id: '4', title: '業務委託契約書テンプレート', type: 'template', subtitle: 'テンプレート', path: '/templates/1' },
-    ];
-
-    const filtered = mockData.filter((item) =>
-      item.title.toLowerCase().includes(query.toLowerCase())
-    );
-
-    setSearchResults(filtered);
-  };
+    try {
+      // 契約書を検索
+      const response = await fetch(`/api/contracts?search=${encodeURIComponent(query)}`);
+      if (response.ok) {
+        const data = await response.json();
+        const results: SearchResult[] = data.contracts.map((contract: {
+          id: string;
+          contractTitle: string | null;
+          fileName: string;
+          contractType: string | null;
+        }) => ({
+          id: contract.id,
+          title: contract.contractTitle || contract.fileName,
+          type: 'contract' as const,
+          subtitle: contract.contractType || '未分類',
+          path: `/contracts/${contract.id}`,
+        }));
+        setSearchResults(results);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchResults([]);
+    }
+  }, []);
 
   const handleSearchClose = () => {
     setSearchOpen(false);
@@ -360,17 +371,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 fontWeight: 600,
               }}
             >
-              Lite プラン
+              Free プラン
             </Typography>
             <Typography
               variant="caption"
+              component={Link}
+              href="/settings/billing"
               sx={{
-                color: '#a1a1aa',
+                color: '#3b82f6',
                 display: 'block',
                 mt: 0.5,
+                textDecoration: 'none',
+                '&:hover': { textDecoration: 'underline' },
               }}
             >
-              月10件のレビュー
+              プランをアップグレード →
             </Typography>
           </Box>
         </Box>
