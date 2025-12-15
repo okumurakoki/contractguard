@@ -31,6 +31,8 @@ import {
   FormControlLabel,
   Alert,
   Checkbox,
+  CircularProgress,
+  Skeleton,
 } from '@mui/material';
 import {
   MoreVert as MoreIcon,
@@ -43,11 +45,11 @@ import {
   Error as ErrorIcon,
   Notifications as NotificationIcon,
   NotificationsActive as NotificationActiveIcon,
-  Edit as EditIcon,
   CloudDownload as ExportIcon,
   LocalOffer as TagIcon,
   Close as CloseIcon,
   CompareArrows as CompareIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -57,68 +59,73 @@ interface Contract {
   name: string;
   type: string;
   uploadDate: string;
-  status: 'pending' | 'completed' | 'error';
-  riskLevel: 'high' | 'medium' | 'low';
+  status: 'analyzing' | 'completed' | 'archived';
+  riskLevel: 'high' | 'medium' | 'low' | null;
   riskCount: number;
   expiryDate?: string;
   reminderEnabled?: boolean;
   reminderDays?: number;
   tags?: string[];
+  counterparty?: string;
 }
 
-const mockContracts: Contract[] = [
-  {
-    id: '1',
-    name: '業務委託契約書_ABC社',
-    type: '業務委託契約',
-    uploadDate: '2024-01-15',
-    status: 'completed',
-    riskLevel: 'high',
-    riskCount: 5,
-    expiryDate: '2025-12-31',
-    reminderEnabled: true,
-    reminderDays: 30,
-    tags: ['重要', '長期契約'],
-  },
-  {
-    id: '2',
-    name: '秘密保持契約_XYZ社',
-    type: '秘密保持契約',
-    uploadDate: '2024-01-14',
-    status: 'completed',
-    riskLevel: 'low',
-    riskCount: 1,
-    expiryDate: '2025-06-30',
-    reminderEnabled: true,
-    reminderDays: 60,
-    tags: ['NDA', '新規取引先'],
-  },
-  {
-    id: '3',
-    name: '売買契約書_DEF社',
-    type: '売買契約',
-    uploadDate: '2024-01-13',
-    status: 'completed',
-    riskLevel: 'medium',
-    riskCount: 3,
-    expiryDate: '2025-03-15',
-    reminderEnabled: false,
-    tags: ['継続案件'],
-  },
-  {
-    id: '4',
-    name: '賃貸借契約_GHI社',
-    type: '賃貸借契約',
-    uploadDate: '2024-01-12',
-    status: 'pending',
-    riskLevel: 'low',
-    riskCount: 0,
-  },
-];
+// APIレスポンスをUIの形式に変換
+function mapApiContractToUi(apiContract: {
+  id: string;
+  contractTitle: string | null;
+  fileName: string;
+  contractType: string | null;
+  counterparty: string | null;
+  createdAt: string;
+  expiryDate: string | null;
+  status: string;
+  tags: string[];
+  review?: {
+    riskLevel: string | null;
+    overallScore: number | null;
+  } | null;
+}): Contract {
+  return {
+    id: apiContract.id,
+    name: apiContract.contractTitle || apiContract.fileName,
+    type: apiContract.contractType || '未分類',
+    uploadDate: new Date(apiContract.createdAt).toLocaleDateString('ja-JP'),
+    status: apiContract.status as Contract['status'],
+    riskLevel: apiContract.review?.riskLevel as Contract['riskLevel'] || null,
+    riskCount: 0, // TODO: APIでリスク数を返す
+    expiryDate: apiContract.expiryDate ? new Date(apiContract.expiryDate).toLocaleDateString('ja-JP') : undefined,
+    tags: apiContract.tags || [],
+    counterparty: apiContract.counterparty || undefined,
+  };
+}
 
 export default function ContractsPage() {
   const router = useRouter();
-  const [contracts, setContracts] = React.useState<Contract[]>(mockContracts);
+  const [contracts, setContracts] = React.useState<Contract[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  // 契約書一覧を取得
+  const fetchContracts = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch('/api/contracts');
+      if (!response.ok) {
+        throw new Error('契約書一覧の取得に失敗しました');
+      }
+      const data = await response.json();
+      setContracts(data.contracts.map(mapApiContractToUi));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchContracts();
+  }, [fetchContracts]);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [selectedContract, setSelectedContract] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -149,9 +156,20 @@ export default function ContractsPage() {
     setSelectedContract(null);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedContract) {
-      setContracts(contracts.filter((c) => c.id !== selectedContract));
+      try {
+        const response = await fetch(`/api/contracts/${selectedContract}`, {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          throw new Error('削除に失敗しました');
+        }
+        setContracts(contracts.filter((c) => c.id !== selectedContract));
+        setSuccess('契約書を削除しました');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '削除に失敗しました');
+      }
     }
     handleMenuClose();
   };
@@ -248,7 +266,7 @@ export default function ContractsPage() {
       c.type,
       c.uploadDate,
       c.expiryDate || '',
-      c.status === 'completed' ? '分析完了' : c.status === 'pending' ? '分析中' : 'エラー',
+      c.status === 'completed' ? '分析完了' : c.status === 'analyzing' ? '分析中' : 'アーカイブ済',
       c.riskLevel === 'high' ? '高' : c.riskLevel === 'medium' ? '中' : '低',
       c.riskCount.toString(),
     ]);
@@ -279,7 +297,7 @@ export default function ContractsPage() {
       c.type,
       c.uploadDate,
       c.expiryDate || '',
-      c.status === 'completed' ? '分析完了' : c.status === 'pending' ? '分析中' : 'エラー',
+      c.status === 'completed' ? '分析完了' : c.status === 'analyzing' ? '分析中' : 'アーカイブ済',
       c.riskLevel === 'high' ? '高' : c.riskLevel === 'medium' ? '中' : '低',
       c.riskCount.toString(),
     ]);
@@ -377,10 +395,10 @@ export default function ContractsPage() {
   const getStatusChip = (status: string) => {
     const config = {
       completed: { label: '分析完了', color: 'success' as const },
-      pending: { label: '分析中', color: 'warning' as const },
-      error: { label: 'エラー', color: 'error' as const },
+      analyzing: { label: '分析中', color: 'warning' as const },
+      archived: { label: 'アーカイブ済', color: 'default' as const },
     };
-    const { label, color } = config[status as keyof typeof config];
+    const { label, color } = config[status as keyof typeof config] || { label: status, color: 'default' as const };
     return <Chip label={label} color={color} size="small" variant="outlined" />;
   };
 
@@ -389,7 +407,7 @@ export default function ContractsPage() {
     const matchesType = filterType === 'all' || contract.type === filterType;
     const matchesRisk = filterRisk === 'all' || contract.riskLevel === filterRisk;
     const matchesTab =
-      tabValue === 0 || (tabValue === 1 && contract.status === 'completed') || (tabValue === 2 && contract.status === 'pending');
+      tabValue === 0 || (tabValue === 1 && contract.status === 'completed') || (tabValue === 2 && contract.status === 'analyzing');
     return matchesSearch && matchesType && matchesRisk && matchesTab;
   });
 
@@ -435,6 +453,12 @@ export default function ContractsPage() {
           </Button>
         </Box>
       </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
       {success && (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess('')}>
@@ -514,7 +538,7 @@ export default function ContractsPage() {
         >
           <Tab label={`すべて (${contracts.length})`} />
           <Tab label={`分析完了 (${contracts.filter((c) => c.status === 'completed').length})`} />
-          <Tab label={`分析中 (${contracts.filter((c) => c.status === 'pending').length})`} />
+          <Tab label={`分析中 (${contracts.filter((c) => c.status === 'analyzing').length})`} />
         </Tabs>
 
         {/* テーブル */}
@@ -537,12 +561,43 @@ export default function ContractsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredContracts.length === 0 ? (
+              {loading ? (
+                // ローディングスケルトン
+                [...Array(3)].map((_, i) => (
+                  <TableRow key={i}>
+                    {compareMode && <TableCell><Skeleton variant="rectangular" width={24} height={24} /></TableCell>}
+                    <TableCell><Skeleton variant="text" width="80%" /></TableCell>
+                    <TableCell><Skeleton variant="text" width="60%" /></TableCell>
+                    <TableCell><Skeleton variant="text" width="70%" /></TableCell>
+                    <TableCell><Skeleton variant="text" width="70%" /></TableCell>
+                    <TableCell><Skeleton variant="rectangular" width={80} height={24} /></TableCell>
+                    <TableCell><Skeleton variant="rectangular" width={100} height={24} /></TableCell>
+                    {!compareMode && <TableCell><Skeleton variant="circular" width={32} height={32} /></TableCell>}
+                  </TableRow>
+                ))
+              ) : filteredContracts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={compareMode ? 7 : 7} align="center" sx={{ py: 8 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      該当する契約書がありません
-                    </Typography>
+                  <TableCell colSpan={compareMode ? 7 : 8} align="center" sx={{ py: 8 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {contracts.length === 0 ? '契約書がまだありません' : '該当する契約書がありません'}
+                      </Typography>
+                      {contracts.length === 0 && (
+                        <Button
+                          component={Link}
+                          href="/upload"
+                          variant="contained"
+                          startIcon={<AddIcon />}
+                          sx={{
+                            bgcolor: 'black',
+                            color: 'white',
+                            '&:hover': { bgcolor: 'grey.800' },
+                          }}
+                        >
+                          契約書をアップロード
+                        </Button>
+                      )}
+                    </Box>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -610,7 +665,7 @@ export default function ContractsPage() {
                     </TableCell>
                     <TableCell>{getStatusChip(contract.status)}</TableCell>
                     <TableCell>
-                      {contract.status === 'completed' ? getRiskChip(contract.riskLevel, contract.riskCount) : '-'}
+                      {contract.status === 'completed' && contract.riskLevel ? getRiskChip(contract.riskLevel, contract.riskCount) : '-'}
                     </TableCell>
                     {!compareMode && (
                       <TableCell align="right">
