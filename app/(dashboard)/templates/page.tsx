@@ -15,6 +15,8 @@ import {
   Tab,
   TextField,
   InputAdornment,
+  Skeleton,
+  Alert,
 } from '@mui/material';
 import {
   Article as TemplateIcon,
@@ -26,83 +28,112 @@ import {
   GridView as GridViewIcon,
   ViewList as ListViewIcon,
 } from '@mui/icons-material';
+import Link from 'next/link';
 
 interface Template {
   id: string;
   name: string;
   category: string;
   description: string;
-  language: string;
   format: string;
+  language?: string;
   isFavorite: boolean;
   downloadCount: number;
 }
 
-const mockTemplates: Template[] = [
+// デフォルトテンプレート（DBにデータがない場合のフォールバック）
+const defaultTemplates: Template[] = [
   {
-    id: '1',
+    id: 'default-1',
     name: '業務委託基本契約書',
     category: '業務委託契約',
     description: 'フリーランスや外部業者への業務委託に使用できる標準的な契約書テンプレート',
-    language: '日本語',
     format: 'Word',
-    isFavorite: true,
+    language: '日本語',
+    isFavorite: false,
     downloadCount: 245,
   },
   {
-    id: '2',
+    id: 'default-2',
     name: '秘密保持契約書（NDA）',
     category: '秘密保持契約',
     description: '取引開始前の情報開示に適したシンプルなNDAテンプレート',
-    language: '日本語',
     format: 'PDF',
-    isFavorite: true,
+    language: '日本語',
+    isFavorite: false,
     downloadCount: 189,
   },
   {
-    id: '3',
+    id: 'default-3',
     name: '売買基本契約書',
     category: '売買契約',
     description: '継続的な商品売買取引に使用できる基本契約書',
-    language: '日本語',
     format: 'Word',
+    language: '日本語',
     isFavorite: false,
     downloadCount: 156,
   },
   {
-    id: '4',
+    id: 'default-4',
     name: 'SaaS利用規約',
     category: 'サービス利用規約',
     description: 'SaaS事業者向けの利用規約テンプレート。個人情報保護法対応済み',
-    language: '日本語',
     format: 'PDF',
+    language: '日本語',
     isFavorite: false,
     downloadCount: 234,
   },
   {
-    id: '5',
+    id: 'default-5',
     name: 'ソフトウェア開発委託契約書',
     category: '業務委託契約',
     description: 'システム開発・アプリ開発の委託に特化した契約書テンプレート',
-    language: '日本語',
     format: 'Word',
+    language: '日本語',
     isFavorite: false,
     downloadCount: 178,
   },
   {
-    id: '6',
+    id: 'default-6',
     name: '顧問契約書',
     category: 'コンサルティング契約',
     description: '弁護士・税理士・コンサルタントなどの顧問契約に使用',
-    language: '日本語',
     format: 'PDF',
+    language: '日本語',
     isFavorite: false,
     downloadCount: 123,
   },
 ];
 
 export default function TemplatesPage() {
-  const [templates, setTemplates] = React.useState<Template[]>(mockTemplates);
+  const [templates, setTemplates] = React.useState<Template[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchTemplates = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch('/api/templates');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.templates && data.templates.length > 0) {
+            setTemplates(data.templates);
+          } else {
+            // DBにデータがない場合はデフォルトを使用
+            setTemplates(defaultTemplates);
+          }
+        } else {
+          setTemplates(defaultTemplates);
+        }
+      } catch {
+        setTemplates(defaultTemplates);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchTemplates();
+  }, []);
   const [tabValue, setTabValue] = React.useState(0);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid');
@@ -251,7 +282,7 @@ export default function TemplatesPage() {
                       </Typography>
 
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Chip label={template.language} size="small" variant="outlined" />
+                        {template.language && <Chip label={template.language} size="small" variant="outlined" />}
                         <Chip label={template.format} size="small" variant="outlined" />
                         <Chip label={`${template.downloadCount}DL`} size="small" variant="outlined" />
                       </Box>
@@ -369,7 +400,7 @@ export default function TemplatesPage() {
                   </Typography>
 
                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 2 }}>
-                    <Chip label={template.language} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                    {template.language && <Chip label={template.language} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />}
                     <Chip label={template.format} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
                     <Chip label={`${template.downloadCount}DL`} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
                   </Box>
@@ -463,7 +494,7 @@ export default function TemplatesPage() {
 
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        <Chip label={template.language} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                        {template.language && <Chip label={template.language} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />}
                         <Chip label={template.format} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
                         <Chip label={`${template.downloadCount}DL`} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
                       </Box>

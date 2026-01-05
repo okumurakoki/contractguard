@@ -25,15 +25,11 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
 } from '@mui/material';
 import {
   Check as CheckIcon,
-  Close as CloseIcon,
   CreditCard as CreditCardIcon,
   FileDownload as DownloadIcon,
-  Upgrade as UpgradeIcon,
-  Cancel as CancelIcon,
 } from '@mui/icons-material';
 
 interface Plan {
@@ -135,49 +131,39 @@ const plans: Plan[] = [
   },
 ];
 
-const mockPaymentMethods: PaymentMethod[] = [
-  {
-    id: '1',
-    brand: 'Visa',
-    last4: '4242',
-    expiryMonth: 12,
-    expiryYear: 2025,
-    isDefault: true,
-  },
-];
-
-const mockInvoices: Invoice[] = [
-  {
-    id: '1',
-    date: '2024-01-01',
-    amount: 9800,
-    status: 'paid',
-    description: 'Standardプラン - 2024年1月分',
-    invoiceUrl: '#',
-  },
-  {
-    id: '2',
-    date: '2023-12-01',
-    amount: 9800,
-    status: 'paid',
-    description: 'Standardプラン - 2023年12月分',
-    invoiceUrl: '#',
-  },
-  {
-    id: '3',
-    date: '2023-11-01',
-    amount: 9800,
-    status: 'paid',
-    description: 'Standardプラン - 2023年11月分',
-    invoiceUrl: '#',
-  },
-];
-
 export default function BillingPage() {
-  const [currentPlan] = React.useState<string>('lite');
+  const [currentPlan, setCurrentPlan] = React.useState<string>('lite');
+  const [loading, setLoading] = React.useState(true);
+  const [paymentMethods, setPaymentMethods] = React.useState<PaymentMethod[]>([]);
+  const [invoices, setInvoices] = React.useState<Invoice[]>([]);
+
+  React.useEffect(() => {
+    const fetchBillingData = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch('/api/billing');
+        if (res.ok) {
+          const data = await res.json();
+          setCurrentPlan(data.planType || 'lite');
+          setPaymentMethods(data.paymentMethods || []);
+          setInvoices(data.invoices || []);
+        }
+      } catch {
+        // エラー時はデフォルト値を使用
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchBillingData();
+
+    // URL パラメータをチェック
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('success') === 'true') {
+      setSuccess('プランのアップグレードが完了しました');
+    }
+  }, []);
   const [upgradeDialogOpen, setUpgradeDialogOpen] = React.useState(false);
   const [selectedPlan, setSelectedPlan] = React.useState<Plan | null>(null);
-  const [cardDialogOpen, setCardDialogOpen] = React.useState(false);
   const [success, setSuccess] = React.useState('');
 
   const handleUpgrade = (plan: Plan) => {
@@ -185,19 +171,64 @@ export default function BillingPage() {
     setUpgradeDialogOpen(true);
   };
 
-  const handleConfirmUpgrade = () => {
-    setSuccess(`${selectedPlan?.name}にアップグレードしました`);
-    setUpgradeDialogOpen(false);
-    setSelectedPlan(null);
+  const [upgrading, setUpgrading] = React.useState(false);
+  const [error, setError] = React.useState('');
+
+  const handleConfirmUpgrade = async () => {
+    if (!selectedPlan) return;
+
+    setUpgrading(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planType: selectedPlan.id }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'アップグレードに失敗しました');
+        return;
+      }
+
+      // Stripe Checkoutにリダイレクト
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch {
+      setError('アップグレードに失敗しました');
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    try {
+      const res = await fetch('/api/billing/portal', {
+        method: 'POST',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'ポータルの作成に失敗しました');
+        return;
+      }
+
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch {
+      setError('ポータルの作成に失敗しました');
+    }
   };
 
   const handleAddCard = () => {
-    setCardDialogOpen(true);
-  };
-
-  const handleSaveCard = () => {
-    setSuccess('支払い方法を追加しました');
-    setCardDialogOpen(false);
+    // Stripeの支払い方法追加はPortal経由で行う
+    handleManageBilling();
   };
 
   const getStatusChip = (status: string) => {
@@ -224,6 +255,12 @@ export default function BillingPage() {
       {success && (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess('')}>
           {success}
+        </Alert>
+      )}
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>
+          {error}
         </Alert>
       )}
 
@@ -377,7 +414,7 @@ export default function BillingPage() {
         支払い方法
       </Typography>
       <Paper sx={{ p: 3, mb: 4, border: '1px solid', borderColor: 'grey.200' }}>
-        {mockPaymentMethods.length === 0 ? (
+        {paymentMethods.length === 0 ? (
           <Box sx={{ textAlign: 'center', py: 4 }}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               支払い方法が登録されていません
@@ -394,7 +431,7 @@ export default function BillingPage() {
         ) : (
           <>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
-              {mockPaymentMethods.map((method) => (
+              {paymentMethods.map((method) => (
                 <Box
                   key={method.id}
                   sx={{
@@ -463,7 +500,7 @@ export default function BillingPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {mockInvoices.length === 0 ? (
+              {invoices.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} align="center" sx={{ py: 8 }}>
                     <Typography variant="body2" color="text.secondary">
@@ -472,7 +509,7 @@ export default function BillingPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                mockInvoices.map((invoice) => (
+                invoices.map((invoice) => (
                   <TableRow key={invoice.id} hover>
                     <TableCell>
                       <Typography variant="body2">{invoice.date}</Typography>
@@ -546,58 +583,20 @@ export default function BillingPage() {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setUpgradeDialogOpen(false)} sx={{ color: 'grey.600' }}>
+          <Button onClick={() => setUpgradeDialogOpen(false)} sx={{ color: 'grey.600' }} disabled={upgrading}>
             キャンセル
           </Button>
           <Button
             onClick={handleConfirmUpgrade}
             variant="contained"
+            disabled={upgrading}
             sx={{
               bgcolor: 'black',
               color: 'white',
               '&:hover': { bgcolor: 'grey.800' },
             }}
           >
-            変更を確定
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* カード追加ダイアログ */}
-      <Dialog open={cardDialogOpen} onClose={() => setCardDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>支払い方法を追加</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2, display: 'grid', gap: 3 }}>
-            <TextField
-              label="カード番号"
-              fullWidth
-              placeholder="1234 5678 9012 3456"
-              helperText="Stripe のテストモードでは 4242 4242 4242 4242 を使用"
-            />
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-              <TextField label="有効期限（MM/YY）" placeholder="12/25" />
-              <TextField label="CVC" placeholder="123" />
-            </Box>
-            <TextField label="カード名義人" fullWidth placeholder="TARO YAMADA" />
-            <Alert severity="info">
-              支払い情報は Stripe により安全に処理されます。クレジットカード情報はサーバーに保存されません。
-            </Alert>
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setCardDialogOpen(false)} sx={{ color: 'grey.600' }}>
-            キャンセル
-          </Button>
-          <Button
-            onClick={handleSaveCard}
-            variant="contained"
-            sx={{
-              bgcolor: 'black',
-              color: 'white',
-              '&:hover': { bgcolor: 'grey.800' },
-            }}
-          >
-            追加する
+            {upgrading ? '処理中...' : '変更を確定'}
           </Button>
         </DialogActions>
       </Dialog>

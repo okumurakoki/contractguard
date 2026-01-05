@@ -44,6 +44,11 @@ export async function GET(request: NextRequest) {
           select: {
             riskLevel: true,
             overallScore: true,
+            _count: {
+              select: {
+                riskItems: true,
+              },
+            },
           },
         },
         folder: {

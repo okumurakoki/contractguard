@@ -522,7 +522,7 @@ export default function UploadPage() {
                 <Box
                   sx={{
                     width: '100%',
-                    height: '400px',
+                    height: '900px',
                     border: '1px solid',
                     borderColor: 'grey.300',
                     borderRadius: 1,

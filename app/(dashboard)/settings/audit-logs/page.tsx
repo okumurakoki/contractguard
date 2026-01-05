@@ -55,121 +55,31 @@ interface AuditLog {
   result: 'success' | 'failed';
 }
 
-const mockAuditLogs: AuditLog[] = [
-  {
-    id: '1',
-    timestamp: '2024-01-15 14:35:22',
-    user: '山田太郎',
-    action: '契約書アップロード',
-    category: 'contract',
-    target: '業務委託契約書_ABC社.pdf',
-    details: '新規契約書をアップロードしました',
-    ipAddress: '192.168.1.100',
-    result: 'success',
-  },
-  {
-    id: '2',
-    timestamp: '2024-01-15 14:30:15',
-    user: '佐藤花子',
-    action: '契約書編集',
-    category: 'contract',
-    target: '秘密保持契約_XYZ社',
-    details: '第5条の内容を更新しました',
-    ipAddress: '192.168.1.101',
-    result: 'success',
-  },
-  {
-    id: '3',
-    timestamp: '2024-01-15 14:25:08',
-    user: '山田太郎',
-    action: '契約書削除',
-    category: 'contract',
-    target: '旧契約書_2023.pdf',
-    details: '期限切れ契約書を削除しました',
-    ipAddress: '192.168.1.100',
-    result: 'success',
-  },
-  {
-    id: '4',
-    timestamp: '2024-01-15 14:20:45',
-    user: '佐藤花子',
-    action: 'ユーザー追加',
-    category: 'user',
-    target: '鈴木一郎',
-    details: '新規メンバーを追加しました（役割: メンバー）',
-    ipAddress: '192.168.1.101',
-    result: 'success',
-  },
-  {
-    id: '5',
-    timestamp: '2024-01-15 14:15:33',
-    user: 'システム',
-    action: 'リマインダー送信',
-    category: 'system',
-    target: '業務委託契約書_ABC社',
-    details: '契約期限30日前の通知を送信しました',
-    ipAddress: 'システム',
-    result: 'success',
-  },
-  {
-    id: '6',
-    timestamp: '2024-01-15 14:10:12',
-    user: '山田太郎',
-    action: 'ログイン',
-    category: 'security',
-    target: 'ダッシュボード',
-    details: 'ログインに成功しました',
-    ipAddress: '192.168.1.100',
-    result: 'success',
-  },
-  {
-    id: '7',
-    timestamp: '2024-01-15 14:05:28',
-    user: '不明',
-    action: 'ログイン試行',
-    category: 'security',
-    target: 'ログインページ',
-    details: 'ログインに失敗しました（パスワード誤り）',
-    ipAddress: '203.0.113.42',
-    result: 'failed',
-  },
-  {
-    id: '8',
-    timestamp: '2024-01-15 14:00:55',
-    user: '佐藤花子',
-    action: '契約書共有',
-    category: 'contract',
-    target: '売買契約書_DEF社',
-    details: '外部ユーザーに契約書を共有しました',
-    ipAddress: '192.168.1.101',
-    result: 'success',
-  },
-  {
-    id: '9',
-    timestamp: '2024-01-15 13:55:17',
-    user: 'システム',
-    action: 'バックアップ実行',
-    category: 'system',
-    target: '全データ',
-    details: '定期バックアップを実行しました',
-    ipAddress: 'システム',
-    result: 'success',
-  },
-  {
-    id: '10',
-    timestamp: '2024-01-15 13:50:42',
-    user: '山田太郎',
-    action: '設定変更',
-    category: 'system',
-    target: 'リマインダー設定',
-    details: '通知タイミングを30日前から60日前に変更しました',
-    ipAddress: '192.168.1.100',
-    result: 'success',
-  },
-];
-
 export default function AuditLogsPage() {
-  const [logs, setLogs] = React.useState<AuditLog[]>(mockAuditLogs);
+  const [logs, setLogs] = React.useState<AuditLog[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchLogs = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch('/api/audit-logs');
+        if (response.ok) {
+          const data = await response.json();
+          setLogs(data.logs || []);
+        } else {
+          const errorData = await response.json();
+          setError(errorData.error || '監査ログの取得に失敗しました');
+        }
+      } catch {
+        setError('監査ログの取得に失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLogs();
+  }, []);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [filterCategory, setFilterCategory] = React.useState('all');
   const [filterResult, setFilterResult] = React.useState('all');

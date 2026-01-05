@@ -38,6 +38,7 @@ model Organization {
   folders         Folder[]
   consultations   LawyerConsultation[]
   auditLogs       AuditLog[]
+  invitations     Invitation[]
 
   @@index([planType])
 }
@@ -94,6 +95,12 @@ model Contract {
   // ステータス
   status          String    @default("analyzing") // analyzing, completed, archived
 
+  // 編集済みコンテンツ（HTML）
+  editedContent   String?   @db.Text
+
+  // バージョン管理
+  currentVersion  Int       @default(1)
+
   // タグ・フォルダ
   tags            String[]
   folderId        String?
@@ -107,6 +114,7 @@ model Contract {
 
   review          ContractReview?
   consultations   LawyerConsultation[]
+  versions        ContractVersion[]
 
   @@index([organizationId])
   @@index([uploadedBy])
@@ -114,6 +122,26 @@ model Contract {
   @@index([status])
   @@index([expiryDate])
   @@index([folderId])
+}
+
+// ============================================================
+// 契約書バージョン管理
+// ============================================================
+
+model ContractVersion {
+  id              String    @id @default(uuid())
+  contractId      String
+  versionNumber   Int
+  content         String    @db.Text
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  changesSummary  String?   @db.Text
+
+  contract        Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, versionNumber])
+  @@index([contractId])
+  @@index([createdAt])
 }
 
 // ============================================================
@@ -282,12 +310,13 @@ model AuditLog {
   organizationId String
   userId        String
 
-  action        String   // view, edit, delete, download
-  resourceType  String   // contract, template
-  resourceId    String
+  action        String   // create, update, delete, view, download, analyze, invite
+  resourceType  String   // contract, template, folder, user, invitation
+  resourceId    String?
 
   ipAddress     String?
   userAgent     String?  @db.Text
+  metadata      String?  @db.Text  // JSON形式の追加情報
 
   createdAt     DateTime @default(now())
 
@@ -314,6 +343,9 @@ model Invitation {
 
   createdAt      DateTime @default(now())
 
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@index([token])
   @@index([email])
+  @@index([organizationId])
 }

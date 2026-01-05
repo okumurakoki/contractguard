@@ -83,6 +83,9 @@ function mapApiContractToUi(apiContract: {
   review?: {
     riskLevel: string | null;
     overallScore: number | null;
+    _count?: {
+      riskItems: number;
+    };
   } | null;
 }): Contract {
   return {
@@ -92,7 +95,7 @@ function mapApiContractToUi(apiContract: {
     uploadDate: new Date(apiContract.createdAt).toLocaleDateString('ja-JP'),
     status: apiContract.status as Contract['status'],
     riskLevel: apiContract.review?.riskLevel as Contract['riskLevel'] || null,
-    riskCount: 0, // TODO: APIでリスク数を返す
+    riskCount: apiContract.review?._count?.riskItems || 0,
     expiryDate: apiContract.expiryDate ? new Date(apiContract.expiryDate).toLocaleDateString('ja-JP') : undefined,
     tags: apiContract.tags || [],
     counterparty: apiContract.counterparty || undefined,

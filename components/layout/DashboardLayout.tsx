@@ -273,7 +273,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               fontSize: '1.125rem',
             }}
           >
-            ContractGuard
+            はじめて.AI REGAL
           </Typography>
         )}
         <IconButton
@@ -429,7 +429,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               letterSpacing: '-0.01em',
             }}
           >
-            {navItems.find((item) => item.path === pathname)?.title || 'ContractGuard'}
+            {navItems.find((item) => item.path === pathname)?.title || 'はじめて.AI REGAL'}
           </Typography>
 
           {/* 検索バー */}

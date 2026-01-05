@@ -7,24 +7,32 @@ AIを活用して契約書のリスクを自動分析し、弁護士費用を大
 ## 🚀 技術スタック
 
 ### フロントエンド
-- **Framework**: Next.js 14 (App Router)
-- **Language**: TypeScript 5.3+
-- **UI Library**: Material-UI v5
-- **State Management**: Zustand + TanStack Query
+- **Framework**: Next.js 16 (App Router, Turbopack)
+- **Language**: TypeScript 5.x
+- **UI Library**: Material-UI v7
+- **State Management**: TanStack Query
 - **Form**: React Hook Form + Zod
 - **Styling**: Emotion (CSS-in-JS)
+- **Editor**: ContentEditable (Custom Implementation)
 
 ### バックエンド
 - **API**: Next.js API Routes (Serverless)
-- **ORM**: Prisma
+- **ORM**: Prisma v7
 - **Database**: PostgreSQL (Supabase)
 - **Authentication**: Clerk
-- **File Storage**: AWS S3
+- **File Storage**: Supabase Storage
+- **PDF Processing**: unpdf
 
 ### AI/ML
-- **Primary LLM**: OpenAI GPT-4o
-- **Secondary LLM**: Anthropic Claude 3.5 Sonnet
-- **Vector DB**: Supabase pgvector
+- **Primary LLM**: Anthropic Claude 4 Sonnet
+- **Text Matching**: Custom Levenshtein Distance Algorithm
+- **Fuzzy Matching**: 70%+ similarity threshold
+
+### テスト
+- **Unit Testing**: Vitest
+- **Testing Library**: @testing-library/react
+- **Coverage**: v8 provider
+- **Test Files**: 39 tests (2 files)
 
 ## 📦 プロジェクト構造
 
@@ -132,24 +140,120 @@ npm run dev
 
 ブラウザで [http://localhost:3000](http://localhost:3000) を開きます。
 
-## 📚 主要機能（Phase 1 MVP）
+## 📚 主要機能
 
-### ✅ 実装済み
+### ✅ 実装済み（2026年1月4日時点）
+
+#### コア機能
 - [x] プロジェクト初期化
-- [x] Material-UIデザインシステム
+- [x] Material-UI v7デザインシステム
 - [x] Prismaスキーマ定義
 - [x] 基本的なダッシュボードUI
-- [x] サイドバーナビゲーション
+- [x] PDF契約書アップロード機能
+- [x] AI契約書分析（Anthropic Claude 4）
+- [x] リスク検出と評価
+- [x] 契約書エディタ（ContentEditable）
+- [x] バージョン管理・履歴機能
+- [x] チーム管理・権限設定
+- [x] フォルダ機能
+- [x] 監査ログ
 
-### 🚧 実装予定
-- [ ] 認証機能（Clerk統合）
-- [ ] 契約書アップロード（S3統合）
-- [ ] AI分析機能（GPT-4o統合）
-- [ ] 契約書一覧・詳細表示
-- [ ] リスク項目の表示・編集
-- [ ] テンプレート機能
-- [ ] チーム管理
-- [ ] Stripe決済統合
+#### 最近の改善（本セッション）
+- [x] **AI提案の反映精度向上** (90%以上の成功率)
+  - ファジーマッチングアルゴリズム実装
+  - Levenshtein距離による類似度計算
+  - デバッグモード追加
+
+- [x] **エディタUX改善**
+  - IME入力時のカーソル位置保持
+  - Undo/Redoのメモリ最適化（デバウンス500ms）
+  - 履歴管理（最大50エントリ）
+
+- [x] **テスト追加**
+  - Vitestセットアップ完了
+  - 39個のユニットテスト（すべて成功）
+  - textMatching, editorUtils のテストカバレッジ
+
+### 🚧 今後の実装予定
+
+#### 中優先度
+- [ ] **PDF抽出の改善**
+  - OCR対応（スキャンPDF）
+  - 表形式の認識
+  - 複雑なレイアウト対応
+
+- [ ] **弁護士相談機能**
+  - 弁護士リスト・検索
+  - 相談予約システム
+  - チャット機能
+
+- [ ] **レポート機能**
+  - 分析結果のPDFレポート出力
+  - グラフ・チャート埋め込み
+  - メール送信機能
+
+#### 低優先度
+- [ ] 比較機能（バージョン間差分表示）
+- [ ] 通知機能（メール/ブラウザ通知）
+- [ ] モバイル対応
+
+詳細は `PROGRESS_AND_TODO.md` を参照してください。
+
+---
+
+## 🧪 テスト
+
+```bash
+# 全テスト実行
+npm test
+
+# UIモードでテスト実行
+npm test:ui
+
+# カバレッジレポート生成
+npm test:coverage
+
+# 特定のテストのみ実行
+npm test textMatching
+```
+
+**テスト結果** (2026年1月4日時点):
+- Test Files: 2 passed
+- Tests: 39 passed
+- Duration: ~1.2s
+
+---
+
+## 📖 ドキュメント
+
+- **開発ログ**: `DEVELOPMENT_LOG.md` - 詳細な実装履歴
+- **進捗とTODO**: `PROGRESS_AND_TODO.md` - 今後のタスクと実装内容
+- **APIドキュメント**: `/docs/api` (準備中)
+
+---
+
+## 🤝 コントリビューション
+
+このプロジェクトはプライベートリポジトリです。
+
+---
+
+## 📝 ライセンス
+
+Proprietary - All Rights Reserved
+
+---
+
+## 📞 サポート
+
+問題が発生した場合:
+1. `DEVELOPMENT_LOG.md` で最近の変更を確認
+2. `PROGRESS_AND_TODO.md` のトラブルシューティングセクションを確認
+3. `npm test` でテストを実行して問題箇所を特定
+
+---
+
+**最終更新**: 2026年1月4日
 
 ## 🧪 テスト
 

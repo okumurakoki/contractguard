@@ -19,6 +19,8 @@ import {
   DialogActions,
   TextField,
   Alert,
+  CircularProgress,
+  Skeleton,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
@@ -30,62 +32,175 @@ import {
 } from '@mui/icons-material';
 import Link from 'next/link';
 
-interface TemplateSection {
-  number: number;
-  title: string;
-  content: string;
+interface TemplateVariable {
+  name: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
 }
 
-const mockTemplate = {
-  id: '1',
-  name: '業務委託契約書テンプレート',
-  category: '業務委託契約',
-  description: 'IT業界向けの標準的な業務委託契約書テンプレート。フリーランスや業務委託先との契約に最適です。',
-  features: [
-    '損害賠償の上限額を明記',
-    '知的財産権の帰属を明確化',
-    '秘密保持条項を含む',
-    '業務範囲を詳細に規定',
-    '支払条件と請求方法を明記',
-  ],
-  sections: [
-    { number: 1, title: '業務内容', content: '甲は、乙に対し、以下の業務を委託し、乙はこれを受託する。' },
-    { number: 2, title: '契約期間', content: '本契約の有効期間は、契約締結日から1年間とする。' },
-    { number: 3, title: '報酬および支払条件', content: '甲は乙に対し、業務の対価として、月額金○○円を支払う。' },
-    { number: 4, title: '秘密保持', content: '甲および乙は、本契約の履行により知り得た相手方の秘密情報を第三者に開示してはならない。' },
-    { number: 5, title: '知的財産権', content: '本契約に基づき作成された成果物の知的財産権は、甲に帰属する。' },
-    { number: 6, title: '損害賠償', content: '甲または乙が本契約に違反し、相手方に損害を与えた場合、その損害を賠償する。' },
-    { number: 7, title: '契約解除', content: '甲または乙は、相手方が本契約に違反した場合、本契約を解除することができる。' },
-    { number: 8, title: '協議事項', content: '本契約に定めのない事項については、甲乙協議の上、決定する。' },
-  ],
-  lastUpdated: '2024-01-10',
-  downloads: 1234,
-};
+interface Template {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  industry: string | null;
+  content: string;
+  variables: TemplateVariable[];
+  usageCount: number;
+  isPremium: boolean;
+  updatedAt: string;
+}
+
+// コンテンツから条項を抽出
+function extractSections(content: string): Array<{ number: number; title: string; content: string }> {
+  const sections: Array<{ number: number; title: string; content: string }> = [];
+  const regex = /第(\d+)条[　\s]*[\(（]([^）\)]+)[）\)]\s*([^第]*)/g;
+  let match;
+
+  while ((match = regex.exec(content)) !== null) {
+    sections.push({
+      number: parseInt(match[1], 10),
+      title: match[2].trim(),
+      content: match[3].replace(/<[^>]*>/g, '').trim().substring(0, 200) + '...',
+    });
+  }
+
+  return sections.length > 0 ? sections : [
+    { number: 1, title: '契約内容', content: 'テンプレートの内容がここに表示されます' },
+  ];
+}
 
 export default function TemplateDetailPage() {
   const params = useParams();
   const router = useRouter();
   const templateId = params.id as string;
+
+  const [template, setTemplate] = React.useState<Template | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
   const [useDialogOpen, setUseDialogOpen] = React.useState(false);
   const [counterparty, setCounterparty] = React.useState('');
-  const [amount, setAmount] = React.useState('');
+  const [variableValues, setVariableValues] = React.useState<Record<string, string>>({});
   const [customNotes, setCustomNotes] = React.useState('');
   const [success, setSuccess] = React.useState('');
+  const [generating, setGenerating] = React.useState(false);
 
-  const handleUseTemplate = () => {
+  // テンプレート詳細を取得
+  React.useEffect(() => {
+    const fetchTemplate = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`/api/templates/${templateId}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          setError(data.error || 'テンプレートの取得に失敗しました');
+          return;
+        }
+
+        setTemplate(data.template);
+      } catch {
+        setError('テンプレートの取得に失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (templateId && !templateId.startsWith('default-')) {
+      fetchTemplate();
+    } else {
+      // デフォルトテンプレートの場合はモックデータを使用
+      setTemplate({
+        id: templateId,
+        title: '業務委託契約書テンプレート',
+        description: 'IT業界向けの標準的な業務委託契約書テンプレート。フリーランスや業務委託先との契約に最適です。',
+        category: '業務委託契約',
+        industry: 'IT',
+        content: '<h2>業務委託契約書</h2><p>第1条（業務内容）甲は、乙に対し、以下の業務を委託し、乙はこれを受託する。</p>',
+        variables: [
+          { name: 'amount', label: '契約金額', placeholder: '例：500,000円' },
+        ],
+        usageCount: 1234,
+        isPremium: false,
+        updatedAt: new Date().toISOString(),
+      });
+      setLoading(false);
+    }
+  }, [templateId]);
+
+  const handleUseTemplate = async () => {
     if (!counterparty.trim()) {
       return;
     }
 
-    // TODO: テンプレートを使用して契約書を生成
-    setSuccess('テンプレートから契約書を作成しました');
-    setUseDialogOpen(false);
+    setGenerating(true);
+    setError(null);
 
-    // 契約書一覧にリダイレクト
-    setTimeout(() => {
-      router.push('/contracts');
-    }, 1500);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          counterparty,
+          variables: variableValues,
+          notes: customNotes,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || '契約書の生成に失敗しました');
+        return;
+      }
+
+      setSuccess('テンプレートから契約書を作成しました');
+      setUseDialogOpen(false);
+
+      // 作成した契約書の詳細ページにリダイレクト
+      setTimeout(() => {
+        router.push(`/contracts/${data.contract.id}`);
+      }, 1500);
+    } catch {
+      setError('契約書の生成に失敗しました');
+    } finally {
+      setGenerating(false);
+    }
   };
+
+  const sections = template ? extractSections(template.content) : [];
+  const features = [
+    '損害賠償の上限額を明記',
+    '知的財産権の帰属を明確化',
+    '秘密保持条項を含む',
+    '業務範囲を詳細に規定',
+    '支払条件と請求方法を明記',
+  ];
+
+  if (loading) {
+    return (
+      <Box>
+        <Skeleton variant="rectangular" height={40} width={40} sx={{ mb: 2 }} />
+        <Skeleton variant="text" height={60} width="60%" />
+        <Skeleton variant="text" height={30} width="40%" />
+        <Skeleton variant="rectangular" height={400} sx={{ mt: 4 }} />
+      </Box>
+    );
+  }
+
+  if (!template) {
+    return (
+      <Box>
+        <IconButton component={Link} href="/templates" sx={{ mb: 2 }}>
+          <BackIcon />
+        </IconButton>
+        <Alert severity="error">{error || 'テンプレートが見つかりません'}</Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box>
@@ -101,28 +216,34 @@ export default function TemplateDetailPage() {
           </Alert>
         )}
 
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
+
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
           <Box sx={{ flex: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
               <DocumentIcon sx={{ fontSize: 40, color: 'black' }} />
               <Typography variant="h4" fontWeight={700}>
-                {mockTemplate.name}
+                {template.title}
               </Typography>
             </Box>
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 2 }}>
-              <Chip label={mockTemplate.category} sx={{ bgcolor: 'black', color: 'white', fontWeight: 600 }} />
+              <Chip label={template.category} sx={{ bgcolor: 'black', color: 'white', fontWeight: 600 }} />
               <Typography variant="body2" color="text.secondary">
-                {mockTemplate.downloads.toLocaleString()}回使用
+                {template.usageCount.toLocaleString()}回使用
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 •
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                最終更新: {mockTemplate.lastUpdated}
+                最終更新: {new Date(template.updatedAt).toLocaleDateString('ja-JP')}
               </Typography>
             </Box>
             <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 800 }}>
-              {mockTemplate.description}
+              {template.description}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 1.5 }}>
@@ -159,7 +280,7 @@ export default function TemplateDetailPage() {
             </Typography>
 
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {mockTemplate.sections.map((section) => (
+              {sections.map((section) => (
                 <Paper
                   key={section.number}
                   sx={{
@@ -206,7 +327,7 @@ export default function TemplateDetailPage() {
             </Typography>
             <Divider sx={{ my: 2 }} />
             <List disablePadding>
-              {mockTemplate.features.map((feature, index) => (
+              {features.map((feature, index) => (
                 <ListItem key={index} sx={{ px: 0, py: 1 }}>
                   <CheckIcon sx={{ color: 'success.main', mr: 1.5, fontSize: 20 }} />
                   <ListItemText
@@ -265,11 +386,11 @@ export default function TemplateDetailPage() {
       </Box>
 
       {/* テンプレート使用ダイアログ */}
-      <Dialog open={useDialogOpen} onClose={() => setUseDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={useDialogOpen} onClose={() => !generating && setUseDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>テンプレートから契約書を作成</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            テンプレート: <strong>{mockTemplate.name}</strong>
+            テンプレート: <strong>{template.title}</strong>
           </Typography>
 
           <Box sx={{ display: 'grid', gap: 3 }}>
@@ -281,16 +402,24 @@ export default function TemplateDetailPage() {
               onChange={(e) => setCounterparty(e.target.value)}
               placeholder="例：株式会社ABC"
               autoFocus
+              disabled={generating}
             />
 
-            <TextField
-              label="契約金額"
-              fullWidth
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="例：500,000円"
-              helperText="金額が決まっている場合は入力してください"
-            />
+            {template.variables.map((variable) => (
+              <TextField
+                key={variable.name}
+                label={variable.label}
+                required={variable.required}
+                fullWidth
+                value={variableValues[variable.name] || ''}
+                onChange={(e) => setVariableValues({
+                  ...variableValues,
+                  [variable.name]: e.target.value,
+                })}
+                placeholder={variable.placeholder}
+                disabled={generating}
+              />
+            ))}
 
             <TextField
               label="備考・特記事項"
@@ -300,6 +429,7 @@ export default function TemplateDetailPage() {
               value={customNotes}
               onChange={(e) => setCustomNotes(e.target.value)}
               placeholder="追加で記載したい内容があれば入力してください"
+              disabled={generating}
             />
 
             <Alert severity="info">
@@ -308,20 +438,20 @@ export default function TemplateDetailPage() {
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setUseDialogOpen(false)} sx={{ color: 'grey.600' }}>
+          <Button onClick={() => setUseDialogOpen(false)} sx={{ color: 'grey.600' }} disabled={generating}>
             キャンセル
           </Button>
           <Button
             onClick={handleUseTemplate}
             variant="contained"
-            disabled={!counterparty.trim()}
+            disabled={!counterparty.trim() || generating}
             sx={{
               bgcolor: 'black',
               color: 'white',
               '&:hover': { bgcolor: 'grey.800' },
             }}
           >
-            契約書を作成
+            {generating ? <CircularProgress size={24} color="inherit" /> : '契約書を作成'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -11,6 +11,12 @@ import {
   DragEndEvent,
 } from '@dnd-kit/core';
 import {
+  getRelativeCursorOffset,
+  setRelativeCursorOffset,
+  debounce,
+  HistoryManager,
+} from '@/lib/utils/editorUtils';
+import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
@@ -28,6 +34,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  DialogActions,
   List,
   ListItem,
   ListItemButton,
@@ -61,6 +68,7 @@ interface ContractEditorProps {
   content: string;
   onChange: (content: string) => void;
   onEditorReady?: (editor: any) => void;
+  contractId?: string;
 }
 
 interface ArticleItem {
@@ -134,7 +142,23 @@ function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump
 }
 
 // エディタ内のドラッグ可能な条項コンポーネント
-function SortableEditorArticle({ article, onContentChange }: { article: ArticleItem; onContentChange: (id: string, newContent: string) => void }) {
+interface SortableEditorArticleProps {
+  article: ArticleItem;
+  onContentChange: (id: string, newContent: string) => void;
+  onCompositionStart: () => void;
+  onCompositionEnd: (e: React.CompositionEvent<HTMLDivElement>) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  isComposing: boolean;
+}
+
+function SortableEditorArticle({
+  article,
+  onContentChange,
+  onCompositionStart,
+  onCompositionEnd,
+  onKeyDown,
+  isComposing
+}: SortableEditorArticleProps) {
   const {
     attributes,
     listeners,
@@ -151,6 +175,7 @@ function SortableEditorArticle({ article, onContentChange }: { article: ArticleI
   };
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    if (isComposing) return;
     const newContent = e.currentTarget.innerHTML;
     onContentChange(article.id, newContent);
   };
@@ -201,6 +226,9 @@ function SortableEditorArticle({ article, onContentChange }: { article: ArticleI
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
+        onKeyDown={onKeyDown}
         dangerouslySetInnerHTML={{ __html: article.content }}
         sx={{ outline: 'none' }}
       />
@@ -269,11 +297,22 @@ const articleTemplates = [
   },
 ];
 
-export default function ContractEditor({ content, onChange, onEditorReady }: ContractEditorProps) {
+export default function ContractEditor({ content, onChange, onEditorReady, contractId }: ContractEditorProps) {
   const [articles, setArticles] = React.useState<ArticleItem[]>([]);
   const [headerContent, setHeaderContent] = React.useState('');
   const [footerContent, setFooterContent] = React.useState('');
   const [templateDialogOpen, setTemplateDialogOpen] = React.useState(false);
+
+  // AI並び替え関連
+  const [aiReordering, setAiReordering] = React.useState(false);
+  const [aiReorderDialogOpen, setAiReorderDialogOpen] = React.useState(false);
+  const [suggestedOrder, setSuggestedOrder] = React.useState<string[] | null>(null);
+  const [reorderReasoning, setReorderReasoning] = React.useState<string[]>([]);
+
+  // IME対応
+  const [isComposing, setIsComposing] = React.useState(false);
+  const savedCursorOffsetRef = React.useRef<number | null>(null);
+
   const editorContainerRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef(content);
 
@@ -282,9 +321,17 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
     contentRef.current = content;
   }, [content]);
 
-  // Undo/Redo用の履歴管理
-  const [history, setHistory] = React.useState<string[]>([content]);
-  const [historyIndex, setHistoryIndex] = React.useState(0);
+  // Undo/Redo用の履歴管理（HistoryManagerクラスを使用）
+  const historyManagerRef = React.useRef(new HistoryManager(50));
+  const [canUndo, setCanUndo] = React.useState(false);
+  const [canRedo, setCanRedo] = React.useState(false);
+
+  // 履歴マネージャーを初期化
+  React.useEffect(() => {
+    historyManagerRef.current.initialize(content);
+    setCanUndo(false);
+    setCanRedo(false);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -383,23 +430,123 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
   }, [content]);
   // Tiptapエディタは使用しない - シンプルなcontentEditableを使用
 
+  // カーソル位置の保存（相対的なオフセットとして保存）
+  const saveCursorPosition = React.useCallback(() => {
+    if (editorContainerRef.current) {
+      const offset = getRelativeCursorOffset(editorContainerRef.current);
+      savedCursorOffsetRef.current = offset;
+    }
+  }, []);
+
+  // カーソル位置の復元
+  const restoreCursorPosition = React.useCallback(() => {
+    if (editorContainerRef.current && savedCursorOffsetRef.current !== null) {
+      // 次のフレームで復元（DOMの更新を待つ）
+      requestAnimationFrame(() => {
+        if (editorContainerRef.current && savedCursorOffsetRef.current !== null) {
+          setRelativeCursorOffset(editorContainerRef.current, savedCursorOffsetRef.current);
+        }
+      });
+    }
+  }, []);
+
+  // IME入力開始
+  const handleCompositionStart = React.useCallback(() => {
+    setIsComposing(true);
+    saveCursorPosition();
+  }, [saveCursorPosition]);
+
+  // IME入力終了
+  const handleCompositionEnd = React.useCallback((e: React.CompositionEvent<HTMLDivElement>) => {
+    setIsComposing(false);
+    // IME確定後にコンテンツを更新
+    const newContent = e.currentTarget.innerHTML;
+
+    // 履歴に追加（デバウンス処理付き）
+    debouncedAddToHistory(newContent);
+
+    // 即座に onChange を呼ぶ
+    onChange(newContent);
+
+    // カーソル位置を復元
+    restoreCursorPosition();
+  }, [onChange, restoreCursorPosition]);
+
   // 履歴に追加
   const addToHistory = React.useCallback((newContent: string) => {
-    setHistory((prev) => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(newContent);
-      return newHistory;
-    });
-    setHistoryIndex((prev) => prev + 1);
-  }, [historyIndex]);
+    if (isComposing) return;
+
+    historyManagerRef.current.push(newContent);
+    setCanUndo(historyManagerRef.current.canUndo());
+    setCanRedo(historyManagerRef.current.canRedo());
+  }, [isComposing]);
+
+  // デバウンス処理付きの履歴追加（500ms）
+  const debouncedAddToHistory = React.useMemo(
+    () => debounce(addToHistory, 500),
+    [addToHistory]
+  );
+
+  // Undo実行
+  const performUndo = React.useCallback(() => {
+    const previousContent = historyManagerRef.current.undo();
+    if (previousContent !== null) {
+      onChange(previousContent);
+      setCanUndo(historyManagerRef.current.canUndo());
+      setCanRedo(historyManagerRef.current.canRedo());
+    }
+  }, [onChange]);
+
+  // Redo実行
+  const performRedo = React.useCallback(() => {
+    const nextContent = historyManagerRef.current.redo();
+    if (nextContent !== null) {
+      onChange(nextContent);
+      setCanUndo(historyManagerRef.current.canUndo());
+      setCanRedo(historyManagerRef.current.canRedo());
+    }
+  }, [onChange]);
+
+  // キーボードショートカット
+  const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // IME入力中はショートカットを無効化
+    if (isComposing) return;
+
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    if (isCtrlOrCmd) {
+      switch (e.key.toLowerCase()) {
+        case 'z':
+          e.preventDefault();
+          if (e.shiftKey) {
+            // Redo
+            performRedo();
+          } else {
+            // Undo
+            performUndo();
+          }
+          break;
+        case 'b':
+          e.preventDefault();
+          document.execCommand('bold', false);
+          break;
+        case 'i':
+          e.preventDefault();
+          document.execCommand('italic', false);
+          break;
+        case 'u':
+          e.preventDefault();
+          document.execCommand('underline', false);
+          break;
+        case 's':
+          // Ctrl+S はブラウザのデフォルト動作（保存）を許可
+          break;
+      }
+    }
+  }, [isComposing, performUndo, performRedo]);
 
   // エディタインスタンスを模擬（Tiptap互換のAPI）- 一度だけ実行
   const editorReadyCalledRef = React.useRef(false);
-  const historyIndexRef = React.useRef(historyIndex);
-
-  React.useEffect(() => {
-    historyIndexRef.current = historyIndex;
-  }, [historyIndex]);
 
   React.useEffect(() => {
     if (onEditorReady && !editorReadyCalledRef.current) {
@@ -408,12 +555,7 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
         commands: {
           setContent: (newContent: string) => {
             // 履歴に追加
-            setHistory((prev) => {
-              const newHistory = prev.slice(0, historyIndexRef.current + 1);
-              newHistory.push(newContent);
-              return newHistory;
-            });
-            setHistoryIndex((prev) => prev + 1);
+            addToHistory(newContent);
             onChange(newContent);
           },
         },
@@ -425,12 +567,7 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
                   const currentContent = contentRef.current;
                   const newContent = currentContent + html + html2;
                   // 履歴に追加
-                  setHistory((prev) => {
-                    const newHistory = prev.slice(0, historyIndexRef.current + 1);
-                    newHistory.push(newContent);
-                    return newHistory;
-                  });
-                  setHistoryIndex((prev) => prev + 1);
+                  addToHistory(newContent);
                   onChange(newContent);
                 },
               }),
@@ -441,32 +578,14 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
       onEditorReady(mockEditor);
       editorReadyCalledRef.current = true;
     }
-  }, [onEditorReady, onChange]);
-
-  // Undo
-  const handleUndo = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      onChange(history[newIndex]);
-    }
-  };
-
-  // Redo
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      onChange(history[newIndex]);
-    }
-  };
+  }, [onEditorReady, onChange, addToHistory]);
 
   // テキストフォーマット関数
   const applyFormat = (command: string, value?: string) => {
     document.execCommand(command, false, value);
   };
 
-  // 変更マークを挿入する関数
+  // 変更マークを挿入する関数（状態: pending → confirmed → finalized）
   const insertDeletion = () => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
@@ -476,7 +595,8 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
 
     if (selectedText) {
       const del = document.createElement('del');
-      del.className = 'track-deletion';
+      del.className = 'track-deletion track-pending';
+      del.setAttribute('data-change-time', Date.now().toString());
       del.textContent = selectedText;
       range.deleteContents();
       range.insertNode(del);
@@ -492,25 +612,44 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
 
     if (selectedText) {
       const ins = document.createElement('ins');
-      ins.className = 'track-insertion';
+      ins.className = 'track-insertion track-pending';
+      ins.setAttribute('data-change-time', Date.now().toString());
       ins.textContent = selectedText;
       range.deleteContents();
       range.insertNode(ins);
     }
   };
 
+  // 保存時に pending → confirmed に変更
+  const confirmChanges = (content: string): string => {
+    return content
+      .replace(/track-pending/g, 'track-confirmed');
+  };
+
+  // 読み込み時に confirmed → finalized に変更
+  const finalizeChanges = (content: string): string => {
+    return content
+      .replace(/track-confirmed/g, 'track-finalized');
+  };
+
   const handleArticleContentChange = (id: string, newContent: string) => {
+    // カーソル位置を保存
+    saveCursorPosition();
+
     setArticles((prevArticles) => {
       const updatedArticles = prevArticles.map((article) =>
         article.id === id ? { ...article, content: newContent } : article
       );
 
-      // 全体のコンテンツを更新（非同期で実行）
-      setTimeout(() => {
+      // 全体のコンテンツを更新（次のフレームで実行）
+      requestAnimationFrame(() => {
         const fullContent = headerContent + updatedArticles.map(a => a.content).join('') + footerContent;
-        addToHistory(fullContent);
+        debouncedAddToHistory(fullContent);
         onChange(fullContent);
-      }, 0);
+
+        // カーソル位置を復元
+        restoreCursorPosition();
+      });
 
       return updatedArticles;
     });
@@ -648,20 +787,94 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
     onChange(cleanedContent);
   };
 
+  // AI並び替え提案を取得
+  const handleAIReorder = async () => {
+    if (!contractId || articles.length === 0) return;
+
+    setAiReordering(true);
+    try {
+      const response = await fetch(`/api/contracts/${contractId}/suggest-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          articles: articles.map((a) => ({ number: a.number, title: a.title })),
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSuggestedOrder(data.suggestedOrder);
+        setReorderReasoning(data.reasoning || []);
+        setAiReorderDialogOpen(true);
+      }
+    } catch (error) {
+      console.error('AI reorder error:', error);
+    } finally {
+      setAiReordering(false);
+    }
+  };
+
+  // AI提案の順序を適用
+  const applyAIReorder = () => {
+    if (!suggestedOrder) return;
+
+    // 提案された順序に基づいて条項を並び替え
+    const reorderedArticles = suggestedOrder
+      .map((num) => articles.find((a) => a.number === num))
+      .filter(Boolean) as ArticleItem[];
+
+    // 条番号を1から振り直す
+    const updatedArticles = reorderedArticles.map((article, index) => {
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = article.content;
+      const h3 = tempDiv.querySelector('h3');
+
+      if (h3) {
+        const text = h3.textContent || '';
+        const newNumber = index + 1;
+        const newText = text.replace(/第\d+条/, `第${newNumber}条`);
+        h3.textContent = newText;
+
+        return {
+          ...article,
+          number: newNumber.toString(),
+          content: tempDiv.innerHTML,
+        };
+      }
+
+      return { ...article, number: (index + 1).toString() };
+    });
+
+    setArticles(updatedArticles);
+
+    // 並び替えた内容を通知
+    const reorderedContent = headerContent + updatedArticles.map((a) => a.content).join('') + footerContent;
+    addToHistory(reorderedContent);
+    onChange(reorderedContent);
+
+    setAiReorderDialogOpen(false);
+    setSuggestedOrder(null);
+    setReorderReasoning([]);
+  };
+
   return (
-    <Box sx={{ display: 'flex', gap: 2 }}>
+    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
       {/* 条項一覧サイドバー */}
       {articles.length > 0 && (
         <Paper
           sx={{
-            width: 220,
+            width: 200,
+            flexShrink: 0,
             border: '1px solid',
             borderColor: 'grey.200',
             borderRadius: 1,
-            p: 2,
-            maxHeight: '600px',
+            p: 1.5,
+            position: 'sticky',
+            top: 16,
+            maxHeight: 'calc(100vh - 250px)',
             display: 'flex',
             flexDirection: 'column',
+            overflowY: 'auto',
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
@@ -699,7 +912,8 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
           border: '1px solid',
           borderColor: 'grey.200',
           borderRadius: 1,
-          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
         {/* ツールバー */}
@@ -717,21 +931,21 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
       >
         {/* Undo/Redo */}
         <Box sx={{ display: 'flex', gap: 0.5 }}>
-          <Tooltip title="元に戻す">
+          <Tooltip title="元に戻す (Ctrl+Z)">
             <IconButton
               size="small"
-              onClick={handleUndo}
-              disabled={historyIndex <= 0}
+              onClick={performUndo}
+              disabled={!canUndo}
               sx={{ bgcolor: 'white' }}
             >
               <UndoIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="やり直す">
+          <Tooltip title="やり直す (Ctrl+Shift+Z)">
             <IconButton
               size="small"
-              onClick={handleRedo}
-              disabled={historyIndex >= history.length - 1}
+              onClick={performRedo}
+              disabled={!canRedo}
               sx={{ bgcolor: 'white' }}
             >
               <RedoIcon fontSize="small" />
@@ -931,6 +1145,32 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
           </Button>
         </Tooltip>
 
+        {/* AI並び替え */}
+        {contractId && articles.length > 1 && (
+          <Tooltip title="AIが最適な条項順序を提案">
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={aiReordering ? <AutoFixIcon className="animate-spin" /> : <AutoFixIcon />}
+              onClick={handleAIReorder}
+              disabled={aiReordering}
+              sx={{
+                borderColor: '#6366f1',
+                color: '#6366f1',
+                textTransform: 'none',
+                fontWeight: 600,
+                fontSize: '0.8rem',
+                '&:hover': {
+                  borderColor: '#4f46e5',
+                  bgcolor: '#eef2ff',
+                },
+              }}
+            >
+              {aiReordering ? 'AI分析中...' : 'AI並び替え'}
+            </Button>
+          </Tooltip>
+        )}
+
         <Divider orientation="vertical" flexItem />
 
         {/* 変更を確定 */}
@@ -960,17 +1200,15 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
       <Box
         ref={editorContainerRef}
         sx={{
-          p: 6,
-          px: 8,
-          minHeight: '800px',
+          p: 3,
+          px: 4,
           bgcolor: 'white',
           position: 'relative',
-          fontSize: '15px',
-          lineHeight: 2,
+          fontSize: '14px',
+          lineHeight: 1.8,
           fontFamily: '"Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif',
           color: '#1a1a1a',
-          maxWidth: '900px',
-          mx: 'auto',
+          maxWidth: '100%',
           '& p': {
             margin: '0.8em 0',
             textAlign: 'justify',
@@ -1027,14 +1265,60 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
           '& u': {
             textDecoration: 'underline',
           },
-          '& del.track-deletion': {
+          // 変更追跡: 編集中（赤系）
+          '& .track-pending': {
+            backgroundColor: '#fef2f2 !important',
+            borderLeft: '3px solid #ef4444',
+            paddingLeft: '0.3em',
+          },
+          '& del.track-deletion.track-pending': {
+            textDecoration: 'line-through',
+            color: '#991b1b',
+          },
+          '& ins.track-insertion.track-pending': {
+            textDecoration: 'underline',
+            textDecorationColor: '#ef4444',
+            color: '#991b1b',
+          },
+          // 変更追跡: 確定済み（緑系）
+          '& .track-confirmed': {
+            backgroundColor: '#f0fdf4 !important',
+            borderLeft: '3px solid #22c55e',
+            paddingLeft: '0.3em',
+          },
+          '& del.track-deletion.track-confirmed': {
+            textDecoration: 'line-through',
+            color: '#166534',
+          },
+          '& ins.track-insertion.track-confirmed': {
+            textDecoration: 'underline',
+            textDecorationColor: '#22c55e',
+            color: '#166534',
+          },
+          // 変更追跡: 最終確定（通常表示）
+          '& .track-finalized': {
+            backgroundColor: 'transparent !important',
+            borderLeft: 'none',
+            paddingLeft: '0',
+          },
+          '& del.track-deletion.track-finalized': {
+            textDecoration: 'line-through',
+            color: 'inherit',
+            opacity: 0.5,
+          },
+          '& ins.track-insertion.track-finalized': {
+            textDecoration: 'none',
+            color: 'inherit',
+          },
+          // フォールバック（古いクラス名用）
+          '& del.track-deletion:not(.track-pending):not(.track-confirmed):not(.track-finalized)': {
             textDecoration: 'line-through',
             color: '#991b1b',
             backgroundColor: '#fef2f2',
             padding: '0.1em 0.2em',
             borderRadius: '2px',
           },
-          '& ins.track-insertion': {
+          '& ins.track-insertion:not(.track-pending):not(.track-confirmed):not(.track-finalized)': {
             textDecoration: 'underline',
             textDecorationColor: '#166534',
             textDecorationStyle: 'solid',
@@ -1056,64 +1340,97 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
           },
         }}
       >
-        {/* ヘッダー部分 */}
-        {headerContent && (
+        {/* 条項が検出されない場合はシンプルな編集モード */}
+        {articles.length === 0 ? (
           <Box
             contentEditable
             suppressContentEditableWarning
             onInput={(e: React.FormEvent<HTMLDivElement>) => {
-              const newHeader = e.currentTarget.innerHTML;
-              setHeaderContent(newHeader);
-              setTimeout(() => {
-                const fullContent = newHeader + articles.map(a => a.content).join('') + footerContent;
-                addToHistory(fullContent);
-                onChange(fullContent);
-              }, 0);
+              if (isComposing) return;
+              const newContent = e.currentTarget.innerHTML;
+              addToHistory(newContent);
+              onChange(newContent);
             }}
-            dangerouslySetInnerHTML={{ __html: headerContent }}
-            sx={{ mb: 2, outline: 'none' }}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
+            onKeyDown={handleKeyDown}
+            dangerouslySetInnerHTML={{ __html: content }}
+            sx={{ outline: 'none', minHeight: '300px' }}
           />
-        )}
-
-        {/* 条項部分（ドラッグ&ドロップ可能） */}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={articles.map(a => a.id)} strategy={verticalListSortingStrategy}>
-            {articles.map((article) => (
-              <SortableEditorArticle
-                key={article.id}
-                article={article}
-                onContentChange={handleArticleContentChange}
+        ) : (
+          <>
+            {/* ヘッダー部分 */}
+            {headerContent && (
+              <Box
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e: React.FormEvent<HTMLDivElement>) => {
+                  if (isComposing) return;
+                  const newHeader = e.currentTarget.innerHTML;
+                  setHeaderContent(newHeader);
+                  setTimeout(() => {
+                    const fullContent = newHeader + articles.map(a => a.content).join('') + footerContent;
+                    addToHistory(fullContent);
+                    onChange(fullContent);
+                  }, 0);
+                }}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
+                onKeyDown={handleKeyDown}
+                dangerouslySetInnerHTML={{ __html: headerContent }}
+                sx={{ mb: 2, outline: 'none' }}
               />
-            ))}
-          </SortableContext>
-        </DndContext>
+            )}
 
-        {/* フッター部分（署名など） */}
-        {footerContent && (
-          <Box
-            contentEditable
-            suppressContentEditableWarning
-            onInput={(e: React.FormEvent<HTMLDivElement>) => {
-              const newFooter = e.currentTarget.innerHTML;
-              setFooterContent(newFooter);
-              setTimeout(() => {
-                const fullContent = headerContent + articles.map(a => a.content).join('') + newFooter;
-                addToHistory(fullContent);
-                onChange(fullContent);
-              }, 0);
-            }}
-            dangerouslySetInnerHTML={{ __html: footerContent }}
-            sx={{
-              mt: 6,
-              pt: 4,
-              textAlign: 'center',
-              outline: 'none',
-              '& p': {
-                margin: '1.2em 0',
-                lineHeight: 2.2,
-              },
-            }}
-          />
+            {/* 条項部分（ドラッグ&ドロップ可能） */}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={articles.map(a => a.id)} strategy={verticalListSortingStrategy}>
+                {articles.map((article) => (
+                  <SortableEditorArticle
+                    key={article.id}
+                    article={article}
+                    onContentChange={handleArticleContentChange}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    onKeyDown={handleKeyDown}
+                    isComposing={isComposing}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+
+            {/* フッター部分（署名など） */}
+            {footerContent && (
+              <Box
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e: React.FormEvent<HTMLDivElement>) => {
+                  if (isComposing) return;
+                  const newFooter = e.currentTarget.innerHTML;
+                  setFooterContent(newFooter);
+                  setTimeout(() => {
+                    const fullContent = headerContent + articles.map(a => a.content).join('') + newFooter;
+                    addToHistory(fullContent);
+                    onChange(fullContent);
+                  }, 0);
+                }}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
+                onKeyDown={handleKeyDown}
+                dangerouslySetInnerHTML={{ __html: footerContent }}
+                sx={{
+                  mt: 6,
+                  pt: 4,
+                  textAlign: 'center',
+                  outline: 'none',
+                  '& p': {
+                    margin: '1.2em 0',
+                    lineHeight: 2.2,
+                  },
+                }}
+              />
+            )}
+          </>
         )}
       </Box>
     </Paper>
@@ -1184,6 +1501,110 @@ export default function ContractEditor({ content, onChange, onEditorReady }: Con
             ))}
           </List>
         </DialogContent>
+      </Dialog>
+
+      {/* AI並び替え提案ダイアログ */}
+      <Dialog
+        open={aiReorderDialogOpen}
+        onClose={() => setAiReorderDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+          },
+        }}
+      >
+        <DialogTitle sx={{ borderBottom: '1px solid', borderColor: 'grey.200', pb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <AutoFixIcon sx={{ color: '#6366f1' }} />
+            <Box>
+              <Typography variant="h6" component="div" fontWeight={700}>
+                AIによる条項並び替え提案
+              </Typography>
+              <Typography variant="caption" component="div" color="text.secondary">
+                一般的な契約書の構成に基づいた最適な順序を提案します
+              </Typography>
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          {suggestedOrder && (
+            <Box>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
+                提案される順序
+              </Typography>
+              <List dense sx={{ bgcolor: 'grey.50', borderRadius: 1, p: 1 }}>
+                {suggestedOrder.map((num, index) => {
+                  const article = articles.find((a) => a.number === num);
+                  return (
+                    <ListItem key={num} sx={{ py: 0.5 }}>
+                      <ListItemText
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box
+                              sx={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: '50%',
+                                bgcolor: '#6366f1',
+                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                              }}
+                            >
+                              {index + 1}
+                            </Box>
+                            <Typography variant="body2">
+                              第{num}条（{article?.title || '不明'}）
+                            </Typography>
+                            {num !== (index + 1).toString() && (
+                              <Typography variant="caption" color="primary">
+                                ← 第{index + 1}条へ変更
+                              </Typography>
+                            )}
+                          </Box>
+                        }
+                      />
+                    </ListItem>
+                  );
+                })}
+              </List>
+              {reorderReasoning.length > 0 && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                    変更理由
+                  </Typography>
+                  <Box sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
+                    {reorderReasoning.slice(0, 3).map((reason, i) => (
+                      <Typography key={i} variant="body2" sx={{ mb: 0.5 }}>
+                        • {reason}
+                      </Typography>
+                    ))}
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid', borderColor: 'grey.200' }}>
+          <Button onClick={() => setAiReorderDialogOpen(false)} sx={{ color: 'grey.600' }}>
+            キャンセル
+          </Button>
+          <Button
+            variant="contained"
+            onClick={applyAIReorder}
+            sx={{
+              bgcolor: '#6366f1',
+              '&:hover': { bgcolor: '#4f46e5' },
+            }}
+          >
+            この順序を適用
+          </Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );

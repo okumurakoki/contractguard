@@ -26,6 +26,7 @@ import {
   InputLabel,
   Select,
   Alert,
+  Skeleton,
 } from '@mui/material';
 import {
   PersonAdd as AddIcon,
@@ -37,57 +38,76 @@ import {
 
 interface TeamMember {
   id: string;
-  name: string;
+  name: string | null;
   email: string;
-  role: 'admin' | 'member' | 'viewer';
+  role: string;
   status: 'active' | 'invited';
   joinedAt: string;
   avatar?: string;
 }
 
-const mockMembers: TeamMember[] = [
-  {
-    id: '1',
-    name: '山田太郎',
-    email: 'yamada@example.com',
-    role: 'admin',
-    status: 'active',
-    joinedAt: '2024-01-01',
-  },
-  {
-    id: '2',
-    name: '佐藤花子',
-    email: 'sato@example.com',
-    role: 'member',
-    status: 'active',
-    joinedAt: '2024-01-05',
-  },
-  {
-    id: '3',
-    name: '鈴木一郎',
-    email: 'suzuki@example.com',
-    role: 'member',
-    status: 'active',
-    joinedAt: '2024-01-10',
-  },
-  {
-    id: '4',
-    name: '田中次郎',
-    email: 'tanaka@example.com',
-    role: 'viewer',
-    status: 'invited',
-    joinedAt: '2024-01-15',
-  },
-];
+interface TeamData {
+  members: TeamMember[];
+  invitations: {
+    id: string;
+    email: string;
+    role: string;
+    status: 'invited';
+    createdAt: string;
+  }[];
+  maxMembers: number;
+  currentCount: number;
+}
 
 export default function TeamPage() {
-  const [members, setMembers] = React.useState<TeamMember[]>(mockMembers);
+  const [data, setData] = React.useState<TeamData | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = React.useState<TeamMember | null>(null);
   const [openInviteDialog, setOpenInviteDialog] = React.useState(false);
   const [inviteEmail, setInviteEmail] = React.useState('');
   const [inviteRole, setInviteRole] = React.useState<'admin' | 'member' | 'viewer'>('member');
   const [success, setSuccess] = React.useState('');
+  const [inviting, setInviting] = React.useState(false);
+
+  const fetchTeam = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch('/api/team');
+      if (!response.ok) {
+        throw new Error('チーム情報の取得に失敗しました');
+      }
+      const result = await response.json();
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchTeam();
+  }, [fetchTeam]);
+
+  const allMembers: TeamMember[] = React.useMemo(() => {
+    if (!data) return [];
+    const members = data.members.map((m) => ({
+      ...m,
+      status: 'active' as const,
+    }));
+    const invitations = data.invitations.map((inv) => ({
+      id: inv.id,
+      name: inv.email.split('@')[0],
+      email: inv.email,
+      role: inv.role,
+      status: 'invited' as const,
+      joinedAt: inv.createdAt,
+    }));
+    return [...members, ...invitations];
+  }, [data]);
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, member: TeamMember) => {
     setAnchorEl(event.currentTarget);
@@ -99,31 +119,52 @@ export default function TeamPage() {
     setSelectedMember(null);
   };
 
-  const handleDelete = () => {
-    if (selectedMember) {
-      setMembers(members.filter((m) => m.id !== selectedMember.id));
-      setSuccess(`${selectedMember.name}をチームから削除しました`);
+  const handleDelete = async () => {
+    if (!selectedMember) return;
+
+    try {
+      const endpoint = selectedMember.status === 'invited'
+        ? `/api/team/invitations/${selectedMember.id}`
+        : `/api/team/members/${selectedMember.id}`;
+
+      const response = await fetch(endpoint, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error('削除に失敗しました');
+      }
+      setSuccess(`${selectedMember.name || selectedMember.email}をチームから削除しました`);
+      fetchTeam();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '削除に失敗しました');
     }
     handleMenuClose();
   };
 
-  const handleInvite = () => {
+  const handleInvite = async () => {
     if (!inviteEmail.trim()) return;
 
-    const newMember: TeamMember = {
-      id: String(members.length + 1),
-      name: inviteEmail.split('@')[0],
-      email: inviteEmail,
-      role: inviteRole,
-      status: 'invited',
-      joinedAt: new Date().toISOString().split('T')[0],
-    };
+    setInviting(true);
+    try {
+      const response = await fetch('/api/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
 
-    setMembers([...members, newMember]);
-    setSuccess(`${inviteEmail}に招待メールを送信しました`);
-    setOpenInviteDialog(false);
-    setInviteEmail('');
-    setInviteRole('member');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '招待に失敗しました');
+      }
+
+      setSuccess(`${inviteEmail}に招待メールを送信しました`);
+      setOpenInviteDialog(false);
+      setInviteEmail('');
+      setInviteRole('member');
+      fetchTeam();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '招待に失敗しました');
+    } finally {
+      setInviting(false);
+    }
   };
 
   const getRoleBadge = (role: string) => {
@@ -132,7 +173,7 @@ export default function TeamPage() {
       member: { label: 'メンバー', color: 'primary' as const },
       viewer: { label: '閲覧者', color: 'default' as const },
     };
-    const { label, color } = config[role as keyof typeof config];
+    const { label, color } = config[role as keyof typeof config] || { label: role, color: 'default' as const };
     return <Chip label={label} color={color} size="small" />;
   };
 
@@ -151,8 +192,10 @@ export default function TeamPage() {
       member: '契約書のアップロード、レビュー、編集が可能。他のメンバーの契約書も閲覧できます。',
       viewer: '契約書の閲覧のみ可能。アップロードや編集はできません。',
     };
-    return descriptions[role as keyof typeof descriptions];
+    return descriptions[role as keyof typeof descriptions] || '';
   };
+
+  const remainingSlots = data ? data.maxMembers - data.currentCount : 0;
 
   return (
     <Box>
@@ -162,13 +205,17 @@ export default function TeamPage() {
             チーム管理
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            チームメンバーの招待と権限管理 • <Box component="span" sx={{ fontWeight: 600, color: 'black' }}>あと6人追加可能</Box>
+            チームメンバーの招待と権限管理 •{' '}
+            <Box component="span" sx={{ fontWeight: 600, color: 'black' }}>
+              あと{remainingSlots}人追加可能
+            </Box>
           </Typography>
         </Box>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => setOpenInviteDialog(true)}
+          disabled={remainingSlots <= 0}
           sx={{
             bgcolor: 'black',
             color: 'white',
@@ -185,45 +232,31 @@ export default function TeamPage() {
         </Alert>
       )}
 
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
       {/* 権限説明 */}
       <Paper sx={{ p: 3, mb: 3, border: '1px solid', borderColor: 'grey.200', bgcolor: 'grey.50' }}>
         <Typography variant="h6" fontWeight={700} gutterBottom>
           権限について
         </Typography>
         <Box sx={{ display: 'grid', gap: 2, mt: 2 }}>
-          <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-              {getRoleBadge('admin')}
-              <Typography variant="body2" fontWeight={600}>
-                管理者
+          {['admin', 'member', 'viewer'].map((role) => (
+            <Box key={role}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                {getRoleBadge(role)}
+                <Typography variant="body2" fontWeight={600}>
+                  {role === 'admin' ? '管理者' : role === 'member' ? 'メンバー' : '閲覧者'}
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                {getRoleDescription(role)}
               </Typography>
             </Box>
-            <Typography variant="body2" color="text.secondary">
-              {getRoleDescription('admin')}
-            </Typography>
-          </Box>
-          <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-              {getRoleBadge('member')}
-              <Typography variant="body2" fontWeight={600}>
-                メンバー
-              </Typography>
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              {getRoleDescription('member')}
-            </Typography>
-          </Box>
-          <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-              {getRoleBadge('viewer')}
-              <Typography variant="body2" fontWeight={600}>
-                閲覧者
-              </Typography>
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              {getRoleDescription('viewer')}
-            </Typography>
-          </Box>
+          ))}
         </Box>
       </Paper>
 
@@ -231,7 +264,7 @@ export default function TeamPage() {
       <Paper sx={{ border: '1px solid', borderColor: 'grey.200' }}>
         <Box sx={{ p: 3, borderBottom: '1px solid', borderColor: 'grey.200' }}>
           <Typography variant="h6" fontWeight={700}>
-            チームメンバー ({members.length}人)
+            チームメンバー ({allMembers.length}人)
           </Typography>
         </Box>
         <TableContainer>
@@ -249,55 +282,81 @@ export default function TeamPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {members.map((member) => (
-                <TableRow key={member.id} hover>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Avatar
-                        src={member.avatar}
-                        sx={{
-                          bgcolor: 'black',
-                          width: 40,
-                          height: 40,
-                          fontSize: '0.9rem',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {member.name.charAt(0)}
-                      </Avatar>
-                      <Typography variant="body2" fontWeight={600}>
-                        {member.name}
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
+              {loading ? (
+                [...Array(3)].map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Skeleton variant="circular" width={40} height={40} />
+                        <Skeleton variant="text" width={100} />
+                      </Box>
+                    </TableCell>
+                    <TableCell><Skeleton variant="text" width={150} /></TableCell>
+                    <TableCell><Skeleton variant="text" width={80} /></TableCell>
+                    <TableCell><Skeleton variant="text" width={60} /></TableCell>
+                    <TableCell><Skeleton variant="text" width={80} /></TableCell>
+                    <TableCell><Skeleton variant="text" width={40} /></TableCell>
+                  </TableRow>
+                ))
+              ) : allMembers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 8 }}>
                     <Typography variant="body2" color="text.secondary">
-                      {member.email}
+                      チームメンバーはまだいません
                     </Typography>
-                  </TableCell>
-                  <TableCell>{getRoleBadge(member.role)}</TableCell>
-                  <TableCell>{getStatusBadge(member.status)}</TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {member.joinedAt}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    {member.status === 'invited' && (
-                      <Button
-                        size="small"
-                        startIcon={<EmailIcon />}
-                        sx={{ mr: 1, color: 'grey.700' }}
-                      >
-                        再送信
-                      </Button>
-                    )}
-                    <IconButton size="small" onClick={(e) => handleMenuOpen(e, member)}>
-                      <MoreIcon />
-                    </IconButton>
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                allMembers.map((member) => (
+                  <TableRow key={member.id} hover>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Avatar
+                          src={member.avatar}
+                          sx={{
+                            bgcolor: 'black',
+                            width: 40,
+                            height: 40,
+                            fontSize: '0.9rem',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {(member.name || member.email).charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Typography variant="body2" fontWeight={600}>
+                          {member.name || member.email.split('@')[0]}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {member.email}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{getRoleBadge(member.role)}</TableCell>
+                    <TableCell>{getStatusBadge(member.status)}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {new Date(member.joinedAt).toLocaleDateString('ja-JP')}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">
+                      {member.status === 'invited' && (
+                        <Button
+                          size="small"
+                          startIcon={<EmailIcon />}
+                          sx={{ mr: 1, color: 'grey.700' }}
+                        >
+                          再送信
+                        </Button>
+                      )}
+                      <IconButton size="small" onClick={(e) => handleMenuOpen(e, member)}>
+                        <MoreIcon />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </TableContainer>
@@ -332,7 +391,7 @@ export default function TeamPage() {
             />
             <FormControl fullWidth required>
               <InputLabel>権限</InputLabel>
-              <Select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as any)} label="権限">
+              <Select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member' | 'viewer')} label="権限">
                 <MenuItem value="admin">管理者</MenuItem>
                 <MenuItem value="member">メンバー</MenuItem>
                 <MenuItem value="viewer">閲覧者</MenuItem>
@@ -344,20 +403,20 @@ export default function TeamPage() {
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setOpenInviteDialog(false)} sx={{ color: 'grey.600' }}>
+          <Button onClick={() => setOpenInviteDialog(false)} sx={{ color: 'grey.600' }} disabled={inviting}>
             キャンセル
           </Button>
           <Button
             onClick={handleInvite}
             variant="contained"
-            disabled={!inviteEmail.trim()}
+            disabled={!inviteEmail.trim() || inviting}
             sx={{
               bgcolor: 'black',
               color: 'white',
               '&:hover': { bgcolor: 'grey.800' },
             }}
           >
-            招待を送信
+            {inviting ? '送信中...' : '招待を送信'}
           </Button>
         </DialogActions>
       </Dialog>

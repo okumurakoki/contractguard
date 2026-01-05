@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/prisma';
 import { supabaseAdmin, CONTRACTS_BUCKET } from '@/lib/supabase';
+import { createAuditLog, getRequestInfo } from '@/lib/audit';
 
 // 契約書詳細取得
 export async function GET(
@@ -89,25 +90,69 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { contractTitle, contractType, counterparty, expiryDate, tags, folderId } = body;
+    const { contractTitle, contractType, counterparty, expiryDate, tags, folderId, editedContent } = body;
 
-    const contract = await prisma.contract.updateMany({
+    // 既存の契約書を取得
+    const existingContract = await prisma.contract.findFirst({
       where: {
         id,
         organizationId: user.organizationId,
       },
-      data: {
-        ...(contractTitle && { contractTitle }),
-        ...(contractType && { contractType }),
-        ...(counterparty !== undefined && { counterparty }),
-        ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
-        ...(tags && { tags }),
-        ...(folderId !== undefined && { folderId }),
+      select: {
+        editedContent: true,
+        currentVersion: true,
       },
     });
 
-    if (contract.count === 0) {
+    if (!existingContract) {
       return NextResponse.json({ error: '契約書が見つかりません' }, { status: 404 });
+    }
+
+    // editedContentが変更された場合のみバージョンを作成
+    if (editedContent !== undefined && editedContent !== existingContract.editedContent) {
+      const newVersionNumber = (existingContract.currentVersion || 0) + 1;
+
+      await prisma.$transaction([
+        prisma.contractVersion.create({
+          data: {
+            contractId: id,
+            versionNumber: newVersionNumber,
+            content: editedContent,
+            createdBy: userId,
+            changesSummary: '編集内容を保存',
+          },
+        }),
+        prisma.contract.update({
+          where: { id },
+          data: {
+            currentVersion: newVersionNumber,
+            editedContent,
+            ...(contractTitle && { contractTitle }),
+            ...(contractType && { contractType }),
+            ...(counterparty !== undefined && { counterparty }),
+            ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
+            ...(tags && { tags }),
+            ...(folderId !== undefined && { folderId }),
+          },
+        }),
+      ]);
+    } else {
+      // editedContent以外のフィールドのみ更新
+      await prisma.contract.updateMany({
+        where: {
+          id,
+          organizationId: user.organizationId,
+        },
+        data: {
+          ...(contractTitle && { contractTitle }),
+          ...(contractType && { contractType }),
+          ...(counterparty !== undefined && { counterparty }),
+          ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
+          ...(tags && { tags }),
+          ...(folderId !== undefined && { folderId }),
+          ...(editedContent !== undefined && { editedContent }),
+        },
+      });
     }
 
     return NextResponse.json({ success: true });
@@ -158,6 +203,19 @@ export async function DELETE(
     // データベースから削除
     await prisma.contract.delete({
       where: { id },
+    });
+
+    // 監査ログを記録
+    const { ipAddress, userAgent } = getRequestInfo(request);
+    await createAuditLog({
+      organizationId: user.organizationId,
+      userId,
+      action: 'delete',
+      resourceType: 'contract',
+      resourceId: id,
+      ipAddress,
+      userAgent,
+      metadata: { fileName: contract.fileName },
     });
 
     return NextResponse.json({ success: true });

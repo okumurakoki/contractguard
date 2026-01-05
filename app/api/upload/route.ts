@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { supabaseAdmin, CONTRACTS_BUCKET } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
+import { createAuditLog, getRequestInfo } from '@/lib/audit';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
@@ -65,6 +66,19 @@ export async function POST(request: NextRequest) {
         folderId: folderId || null,
         status: 'analyzing',
       },
+    });
+
+    // 監査ログを記録
+    const { ipAddress, userAgent } = getRequestInfo(request);
+    await createAuditLog({
+      organizationId: user.organizationId,
+      userId,
+      action: 'create',
+      resourceType: 'contract',
+      resourceId: contract.id,
+      ipAddress,
+      userAgent,
+      metadata: { fileName: file.name, contractType },
     });
 
     return NextResponse.json({
