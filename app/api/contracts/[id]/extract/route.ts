@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/prisma';
 import { supabaseAdmin, CONTRACTS_BUCKET } from '@/lib/supabase';
-import { extractTextFromPdf, textToHtml, isValidExtraction } from '@/lib/pdf/extract';
+import { extractTextFromPdf, isValidExtraction, enhancedTextProcessing } from '@/lib/pdf/extract';
+import { parseContractText, structureToHtml } from '@/lib/contract/parser';
+import { ContractStructure } from '@/lib/contract/types';
 
 // PDFからテキストを抽出
 export async function GET(
@@ -55,18 +57,43 @@ export async function GET(
         error: 'テキストを抽出できませんでした。スキャンPDFの可能性があります。',
         text: '',
         html: '',
+        structuredContent: null,
         numPages: extracted.numPages,
       });
     }
 
-    const html = textToHtml(extracted.text);
+    // テキストを正規化
+    const processedText = enhancedTextProcessing(extracted.text);
+
+    // 構造化データに変換
+    const structuredContent: ContractStructure = parseContractText(processedText, {
+      sourceFileName: contract.fileName,
+      extractionMethod: extracted.extractionMethod,
+      pageCount: extracted.numPages,
+    });
+
+    // 構造化データからHTMLを生成
+    const html = structureToHtml(structuredContent);
+
+    // 構造化データをDBに保存
+    prisma.contract.update({
+      where: { id },
+      data: {
+        contractTitle: structuredContent.title,
+        structuredContent: structuredContent as object,
+      },
+    }).catch(err => {
+      console.error('Failed to save structured content:', err);
+    });
 
     return NextResponse.json({
       success: true,
-      text: extracted.text,
+      text: processedText,
       html,
+      structuredContent,
       numPages: extracted.numPages,
       info: extracted.info,
+      extractionMethod: extracted.extractionMethod,
     });
   } catch (error) {
     console.error('Extract error:', error);

@@ -58,8 +58,6 @@ import {
   FormatAlignCenter as FormatAlignCenterIcon,
   FormatAlignRight as FormatAlignRightIcon,
   FormatAlignJustify as FormatAlignJustifyIcon,
-  Title as TitleIcon,
-  FormatQuote as FormatQuoteIcon,
   FormatIndentIncrease as IndentIncreaseIcon,
   FormatIndentDecrease as IndentDecreaseIcon,
 } from '@mui/icons-material';
@@ -78,8 +76,8 @@ interface ArticleItem {
   content: string;
 }
 
-// サイドバー用のソート可能な条項アイテムコンポーネント
-function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump: (number: string) => void }) {
+// サイドバー用のソート可能な条項アイテムコンポーネント（メモ化）
+const SortableArticleItem = React.memo(function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump: (number: string) => void }) {
   const {
     attributes,
     listeners,
@@ -89,11 +87,15 @@ function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump
     isDragging,
   } = useSortable({ id: article.id });
 
-  const style = {
+  const style = React.useMemo(() => ({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-  };
+  }), [transform, transition, isDragging]);
+
+  const handleClick = React.useCallback(() => {
+    onJump(article.number);
+  }, [onJump, article.number]);
 
   return (
     <Box
@@ -129,7 +131,7 @@ function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump
       >
         <DragIcon sx={{ fontSize: '1rem' }} />
       </Box>
-      <Box sx={{ flex: 1 }} onClick={() => onJump(article.number)}>
+      <Box sx={{ flex: 1 }} onClick={handleClick}>
         <Typography variant="caption" fontWeight={600} sx={{ display: 'block' }}>
           第{article.number}条
         </Typography>
@@ -139,7 +141,7 @@ function SortableArticleItem({ article, onJump }: { article: ArticleItem; onJump
       </Box>
     </Box>
   );
-}
+});
 
 // エディタ内のドラッグ可能な条項コンポーネント
 interface SortableEditorArticleProps {
@@ -151,7 +153,7 @@ interface SortableEditorArticleProps {
   isComposing: boolean;
 }
 
-function SortableEditorArticle({
+const SortableEditorArticle = React.memo(function SortableEditorArticle({
   article,
   onContentChange,
   onCompositionStart,
@@ -168,17 +170,20 @@ function SortableEditorArticle({
     isDragging,
   } = useSortable({ id: article.id });
 
-  const style = {
+  const style = React.useMemo(() => ({
     transform: CSS.Transform.toString(transform),
     transition,
     zIndex: isDragging ? 1000 : 'auto',
-  };
+  }), [transform, transition, isDragging]);
 
-  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+  const handleInput = React.useCallback((e: React.FormEvent<HTMLDivElement>) => {
     if (isComposing) return;
     const newContent = e.currentTarget.innerHTML;
     onContentChange(article.id, newContent);
-  };
+  }, [isComposing, onContentChange, article.id]);
+
+  // コンテンツのメモ化（不要な再レンダリングを防止）
+  const contentHtml = React.useMemo(() => ({ __html: article.content }), [article.content]);
 
   return (
     <Box
@@ -229,12 +234,12 @@ function SortableEditorArticle({
         onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
-        dangerouslySetInnerHTML={{ __html: article.content }}
+        dangerouslySetInnerHTML={contentHtml}
         sx={{ outline: 'none' }}
       />
     </Box>
   );
-}
+});
 
 // 条項テンプレートの定義
 const articleTemplates = [
@@ -326,11 +331,12 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
   const [canUndo, setCanUndo] = React.useState(false);
   const [canRedo, setCanRedo] = React.useState(false);
 
-  // 履歴マネージャーを初期化
+  // 履歴マネージャーを初期化（初期化時のみ実行、contentの変更では再実行しない）
   React.useEffect(() => {
     historyManagerRef.current.initialize(content);
     setCanUndo(false);
     setCanRedo(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sensors = useSensors(
@@ -344,9 +350,25 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
     })
   );
 
-  // 契約書の条項を抽出（ヘッダーとフッターを分離）
+  // コンテンツ変更のデバウンス用ref
+  const parseTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastParsedContentRef = React.useRef<string>('');
+
+  // 契約書の条項を抽出（ヘッダーとフッターを分離）- デバウンス付き
   React.useEffect(() => {
     if (!content) return;
+
+    // 同じコンテンツの場合はスキップ
+    if (content === lastParsedContentRef.current) return;
+
+    // 前回のタイムアウトをクリア
+    if (parseTimeoutRef.current) {
+      clearTimeout(parseTimeoutRef.current);
+    }
+
+    // 100msのデバウンスでパース
+    parseTimeoutRef.current = setTimeout(() => {
+      lastParsedContentRef.current = content;
 
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = content;
@@ -427,6 +449,13 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
     });
 
     setArticles(extractedArticles);
+    }, 100); // 100msのデバウンス
+
+    return () => {
+      if (parseTimeoutRef.current) {
+        clearTimeout(parseTimeoutRef.current);
+      }
+    };
   }, [content]);
   // Tiptapエディタは使用しない - シンプルなcontentEditableを使用
 
@@ -470,6 +499,8 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
 
     // カーソル位置を復元
     restoreCursorPosition();
+    // debouncedAddToHistoryはuseMemoで安定しているため依存配列から除外
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onChange, restoreCursorPosition]);
 
   // 履歴に追加
@@ -620,19 +651,15 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
     }
   };
 
-  // 保存時に pending → confirmed に変更
-  const confirmChanges = (content: string): string => {
-    return content
-      .replace(/track-pending/g, 'track-confirmed');
-  };
+  // デバウンス付きのonChange（入力中の高頻度更新を抑制）
+  const debouncedOnChange = React.useMemo(
+    () => debounce((content: string) => {
+      onChange(content);
+    }, 150),
+    [onChange]
+  );
 
-  // 読み込み時に confirmed → finalized に変更
-  const finalizeChanges = (content: string): string => {
-    return content
-      .replace(/track-confirmed/g, 'track-finalized');
-  };
-
-  const handleArticleContentChange = (id: string, newContent: string) => {
+  const handleArticleContentChange = React.useCallback((id: string, newContent: string) => {
     // カーソル位置を保存
     saveCursorPosition();
 
@@ -645,7 +672,7 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
       requestAnimationFrame(() => {
         const fullContent = headerContent + updatedArticles.map(a => a.content).join('') + footerContent;
         debouncedAddToHistory(fullContent);
-        onChange(fullContent);
+        debouncedOnChange(fullContent);
 
         // カーソル位置を復元
         restoreCursorPosition();
@@ -653,49 +680,56 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
 
       return updatedArticles;
     });
-  };
+  }, [saveCursorPosition, headerContent, footerContent, debouncedAddToHistory, debouncedOnChange, restoreCursorPosition]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  // SortableContext用のIDリストをメモ化
+  const articleIds = React.useMemo(() => articles.map(a => a.id), [articles]);
+
+  const handleDragEnd = React.useCallback((event: DragEndEvent) => {
     const { active, over } = event;
 
     if (over && active.id !== over.id) {
-      const oldIndex = articles.findIndex((item) => item.id === active.id);
-      const newIndex = articles.findIndex((item) => item.id === over.id);
-      const newArticles = arrayMove(articles, oldIndex, newIndex);
+      setArticles((prevArticles) => {
+        const oldIndex = prevArticles.findIndex((item) => item.id === active.id);
+        const newIndex = prevArticles.findIndex((item) => item.id === over.id);
+        const newArticles = arrayMove(prevArticles, oldIndex, newIndex);
 
-      // 条番号を自動的に振り直す
-      const updatedArticles = newArticles.map((article, index) => {
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = article.content;
-        const h3 = tempDiv.querySelector('h3');
+        // 条番号を自動的に振り直す
+        const updatedArticles = newArticles.map((article, index) => {
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = article.content;
+          const h3 = tempDiv.querySelector('h3');
 
-        if (h3) {
-          const text = h3.textContent || '';
-          const match = text.match(/第(\d+)条[（(]([^）)]+)[）)]/);
-          if (match) {
-            const newNumber = index + 1;
-            const newText = text.replace(/第\d+条/, `第${newNumber}条`);
-            h3.textContent = newText;
+          if (h3) {
+            const text = h3.textContent || '';
+            const match = text.match(/第(\d+)条[（(]([^）)]+)[）)]/);
+            if (match) {
+              const newNumber = index + 1;
+              const newText = text.replace(/第\d+条/, `第${newNumber}条`);
+              h3.textContent = newText;
 
-            return {
-              ...article,
-              number: newNumber.toString(),
-              content: tempDiv.innerHTML,
-            };
+              return {
+                ...article,
+                number: newNumber.toString(),
+                content: tempDiv.innerHTML,
+              };
+            }
           }
-        }
 
-        return article;
+          return article;
+        });
+
+        // 並び替えた条項を結合してonChangeで通知
+        requestAnimationFrame(() => {
+          const reorderedContent = headerContent + updatedArticles.map(article => article.content).join('') + footerContent;
+          addToHistory(reorderedContent);
+          onChange(reorderedContent);
+        });
+
+        return updatedArticles;
       });
-
-      setArticles(updatedArticles);
-
-      // 並び替えた条項を結合してonChangeで通知
-      const reorderedContent = headerContent + updatedArticles.map(article => article.content).join('') + footerContent;
-      addToHistory(reorderedContent);
-      onChange(reorderedContent);
     }
-  };
+  }, [headerContent, footerContent, addToHistory, onChange]);
 
   const handleRenumberArticles = () => {
     if (articles.length === 0) return;
@@ -720,7 +754,7 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
     onChange(renumberedContent);
   };
 
-  const handleJumpToArticle = (articleNumber: string) => {
+  const handleJumpToArticle = React.useCallback((articleNumber: string) => {
     // エディタ内のh3要素を検索してスクロール
     if (editorContainerRef.current) {
       const headings = editorContainerRef.current.querySelectorAll('h3');
@@ -732,9 +766,9 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
         }
       });
     }
-  };
+  }, []);
 
-  const handleInsertTemplate = (template: typeof articleTemplates[0]) => {
+  const handleInsertTemplate = React.useCallback((template: typeof articleTemplates[0]) => {
     // エディタの最後に条項を追加（insertion マークで追加）
     const templateWithMark = `<ins class="track-insertion">${template.content}</ins>`;
     const updatedContent = content + templateWithMark;
@@ -752,7 +786,7 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
         }
       }
     }, 100);
-  };
+  }, [content, addToHistory, onChange]);
 
   const handleAcceptAllChanges = () => {
     const tempDiv = document.createElement('div');
@@ -889,7 +923,7 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
           </Box>
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={articles.map(a => a.id)} strategy={verticalListSortingStrategy}>
+              <SortableContext items={articleIds} strategy={verticalListSortingStrategy}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                   {articles.map((article) => (
                     <SortableArticleItem
@@ -1384,7 +1418,7 @@ export default function ContractEditor({ content, onChange, onEditorReady, contr
 
             {/* 条項部分（ドラッグ&ドロップ可能） */}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={articles.map(a => a.id)} strategy={verticalListSortingStrategy}>
+              <SortableContext items={articleIds} strategy={verticalListSortingStrategy}>
                 {articles.map((article) => (
                   <SortableEditorArticle
                     key={article.id}

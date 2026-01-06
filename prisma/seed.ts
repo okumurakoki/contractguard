@@ -1,6 +1,31 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import * as dotenv from 'dotenv';
 
-const prisma = new PrismaClient();
+dotenv.config({ path: '.env.local' });
+
+function createPrismaClient() {
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is not defined');
+  }
+
+  const pool = new Pool({
+    connectionString,
+    ssl: process.env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: false }
+      : false,
+  });
+  const adapter = new PrismaPg(pool);
+
+  return new PrismaClient({
+    adapter,
+  });
+}
+
+const prisma = createPrismaClient();
 
 const templates = [
   {

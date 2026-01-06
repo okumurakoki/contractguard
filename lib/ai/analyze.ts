@@ -7,6 +7,8 @@ const anthropic = new Anthropic({
 export interface RiskItem {
   riskType: string;
   riskLevel: 'high' | 'medium' | 'low';
+  articleNumber: number;      // 第X条の番号（必須）
+  paragraphNumber?: number;   // 項番号（オプション）
   sectionTitle: string;
   originalText: string;
   suggestedText: string;
@@ -61,6 +63,12 @@ const SYSTEM_PROMPT = `あなたは日本の契約書を専門にレビューす
 リスクが第1文のみに関係する場合：
 正しいoriginalText: 「甲及び乙は、本契約に関連して知り得た相手方の秘密情報を第三者に開示してはならない。」
 
+【重要】articleNumber（条項番号）について：
+- 各リスクには必ず articleNumber（数字）を含めてください
+- これは「第X条」のXの部分の数字です
+- 例：第9条の場合は articleNumber: 9
+- 複数の項がある場合は paragraphNumber（項番号）も含めてください
+
 出力は必ず以下のJSON形式で返してください：
 {
   "riskLevel": "high" | "medium" | "low",
@@ -70,7 +78,9 @@ const SYSTEM_PROMPT = `あなたは日本の契約書を専門にレビューす
     {
       "riskType": "損害賠償条項",
       "riskLevel": "high" | "medium" | "low",
-      "sectionTitle": "該当セクション名",
+      "articleNumber": 10,
+      "paragraphNumber": 1,
+      "sectionTitle": "第10条（損害賠償）",
       "originalText": "【契約書から一字一句そのままコピー】",
       "suggestedText": "修正案",
       "reason": "修正理由",
@@ -249,8 +259,9 @@ export async function analyzeContractMock(contractType: string): Promise<Analysi
       {
         riskType: '損害賠償条項',
         riskLevel: 'high',
+        articleNumber: 10,
+        paragraphNumber: 1,
         sectionTitle: '第10条（損害賠償）',
-        // 条項タイトルを含めず、本文のみ
         originalText: '乙は、本契約に違反した場合、甲に生じた一切の損害を賠償するものとする。',
         suggestedText: '乙は、本契約に違反した場合、甲に生じた直接かつ現実の損害を賠償するものとする。ただし、賠償額の上限は本契約に基づく報酬総額を超えないものとする。',
         reason: '損害賠償の範囲が無制限となっており、予測不可能なリスクが生じる可能性があります。',
@@ -259,8 +270,9 @@ export async function analyzeContractMock(contractType: string): Promise<Analysi
       {
         riskType: '契約解除条件',
         riskLevel: 'medium',
+        articleNumber: 15,
+        paragraphNumber: 1,
         sectionTitle: '第15条（契約の解除）',
-        // 条項タイトルを含めず、本文のみ
         originalText: '甲は、乙に書面で通知することにより、いつでも本契約を解除することができる。',
         suggestedText: '甲または乙は、30日前までに相手方に書面で通知することにより、本契約を解除することができる。',
         reason: '一方的な解除権が設定されており、受託者側に不利な条件となっています。',
@@ -269,8 +281,9 @@ export async function analyzeContractMock(contractType: string): Promise<Analysi
       {
         riskType: '知的財産権',
         riskLevel: 'low',
+        articleNumber: 8,
+        paragraphNumber: 1,
         sectionTitle: '第8条（知的財産権）',
-        // 条項タイトルを含めず、本文のみ
         originalText: '本業務により生じた成果物の知的財産権は、甲に帰属するものとする。',
         suggestedText: '本業務により生じた成果物の知的財産権は、報酬の支払完了をもって甲に帰属するものとする。',
         reason: '知的財産権の帰属時期が明確でないため、報酬支払完了を条件とすることを推奨します。',

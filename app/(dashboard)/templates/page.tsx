@@ -407,25 +407,28 @@ export default function TemplatesPage() {
 
                   <Box sx={{ display: 'flex', gap: 1, pt: 1, borderTop: '1px solid', borderColor: 'grey.200' }}>
                     <Button
+                      component={Link}
+                      href={`/templates/${template.id}`}
                       size="small"
                       startIcon={<ViewIcon sx={{ fontSize: 16 }} />}
                       sx={{ color: 'grey.700', fontSize: '0.8rem', px: 1 }}
                     >
-                      プレビュー
+                      詳細
                     </Button>
                     <Button
+                      component={Link}
+                      href={`/templates/${template.id}?use=true`}
                       size="small"
-                      startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
                       sx={{
                         ml: 'auto',
-                        bgcolor: 'black',
+                        bgcolor: '#1e40af',
                         color: 'white',
                         fontSize: '0.8rem',
                         px: 1.5,
-                        '&:hover': { bgcolor: 'grey.800' },
+                        '&:hover': { bgcolor: '#1e3a8a' },
                       }}
                     >
-                      DL
+                      使う
                     </Button>
                   </Box>
                 </CardContent>
@@ -501,23 +504,26 @@ export default function TemplatesPage() {
 
                       <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button
+                          component={Link}
+                          href={`/templates/${template.id}`}
                           size="small"
                           startIcon={<ViewIcon sx={{ fontSize: 16 }} />}
                           sx={{ color: 'grey.700', fontSize: '0.8rem' }}
                         >
-                          プレビュー
+                          詳細
                         </Button>
                         <Button
+                          component={Link}
+                          href={`/templates/${template.id}?use=true`}
                           size="small"
-                          startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
                           sx={{
-                            bgcolor: 'black',
+                            bgcolor: '#1e40af',
                             color: 'white',
                             fontSize: '0.8rem',
-                            '&:hover': { bgcolor: 'grey.800' },
+                            '&:hover': { bgcolor: '#1e3a8a' },
                           }}
                         >
-                          ダウンロード
+                          使う
                         </Button>
                       </Box>
                     </Box>

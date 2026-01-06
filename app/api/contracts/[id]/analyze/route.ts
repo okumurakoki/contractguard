@@ -125,6 +125,8 @@ export async function POST(
         reviewId: review.id,
         riskType: risk.riskType,
         riskLevel: risk.riskLevel,
+        articleNumber: risk.articleNumber,
+        paragraphNumber: risk.paragraphNumber,
         sectionTitle: risk.sectionTitle,
         originalText: risk.originalText,
         suggestedText: risk.suggestedText,

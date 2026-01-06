@@ -24,3 +24,74 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* モバイル対応スタイル */
+@media (max-width: 600px) {
+  /* タッチ操作の最適化 */
+  button, a, input, select, textarea {
+    min-height: 44px;
+  }
+
+  /* テーブルのスクロール対応 */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* 画像の最大幅 */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* フォームの改善 */
+  input, select, textarea {
+    font-size: 16px !important; /* iOSでのズーム防止 */
+  }
+
+  /* 長いテキストの折り返し */
+  .MuiTypography-root {
+    word-break: break-word;
+  }
+
+  /* カードのパディング調整 */
+  .MuiPaper-root {
+    padding: 12px !important;
+  }
+
+  /* ダイアログの余白調整 */
+  .MuiDialog-paper {
+    margin: 16px;
+  }
+
+  /* ボタンのサイズ調整 */
+  .MuiButton-root {
+    padding: 10px 16px;
+  }
+}
+
+/* タブレット対応 */
+@media (min-width: 601px) and (max-width: 960px) {
+  .MuiPaper-root {
+    padding: 16px !important;
+  }
+}
+
+/* タッチデバイス向けのホバー効果無効化 */
+@media (hover: none) {
+  .MuiListItemButton-root:hover {
+    background-color: transparent;
+  }
+}
+
+/* スムーズスクロール */
+html {
+  scroll-behavior: smooth;
+}
+
+/* フォーカス表示の改善 */
+:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}

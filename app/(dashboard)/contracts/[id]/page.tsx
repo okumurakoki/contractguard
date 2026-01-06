@@ -27,6 +27,10 @@ import {
   ListItemButton,
   ListItemIcon,
   Tooltip,
+  Select,
+  FormControl,
+  InputLabel,
+  MenuItem,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
@@ -45,10 +49,10 @@ import {
   Refresh as RefreshIcon,
   History as HistoryIcon,
   Restore as RestoreIcon,
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { findBestMatch, findByPrefix, debugMatch } from '@/lib/utils/textMatching';
 
 const ContractEditor = dynamic(() => import('@/components/editor/ContractEditor'), {
   ssr: false,
@@ -58,6 +62,8 @@ interface RiskItem {
   id: string;
   riskType: string;
   riskLevel: 'high' | 'medium' | 'low';
+  articleNumber: number | null;    // 条項番号（第X条のX）
+  paragraphNumber: number | null;  // 項番号
   sectionTitle: string | null;
   originalText: string | null;
   suggestedText: string | null;
@@ -75,12 +81,24 @@ interface ContractReview {
   riskItems: RiskItem[];
 }
 
+interface Counterparty {
+  id: string;
+  name: string;
+  shortName: string | null;
+  address: string | null;
+  representative: string | null;
+  repTitle: string | null;
+}
+
 interface ContractData {
   id: string;
   fileName: string;
   contractTitle: string | null;
   contractType: string | null;
   counterparty: string | null;
+  counterpartyId: string | null;
+  counterpartyRef: Counterparty | null;
+  ourPosition: string | null;
   createdAt: string;
   expiryDate: string | null;
   status: string;
@@ -114,10 +132,9 @@ export default function ContractDetailPage() {
 
   // UI状態
   const [success, setSuccess] = React.useState('');
-  const [editMode, setEditMode] = React.useState(false);
+  const [viewMode, setViewMode] = React.useState<'pdf' | 'edit'>('pdf'); // PDFビュー or テキスト編集
   const [editorInstance, setEditorInstance] = React.useState<any>(null);
   const [currentPage, setCurrentPage] = React.useState(1);
-  const [appliedRisks, setAppliedRisks] = React.useState<string[]>([]);
   const [analyzing, setAnalyzing] = React.useState(false);
   const [extracting, setExtracting] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
@@ -131,6 +148,13 @@ export default function ContractDetailPage() {
   const [restoringVersion, setRestoringVersion] = React.useState<string | null>(null);
   const [previewVersion, setPreviewVersion] = React.useState<ContractVersion | null>(null);
   const [previewContent, setPreviewContent] = React.useState<string | null>(null);
+
+  // 取引先・設定
+  const [counterparties, setCounterparties] = React.useState<Counterparty[]>([]);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [selectedCounterpartyId, setSelectedCounterpartyId] = React.useState<string>('');
+  const [selectedOurPosition, setSelectedOurPosition] = React.useState<string>('');
+  const [savingSettings, setSavingSettings] = React.useState(false);
 
   // 契約書データを取得
   const fetchContract = React.useCallback(async () => {
@@ -154,6 +178,107 @@ export default function ContractDetailPage() {
     fetchContract();
   }, [fetchContract]);
 
+  // 編集モードに切り替える際のテキスト抽出
+  const handleSwitchToEdit = async () => {
+    if (contract?.editedContent) {
+      // 既存のeditedContentがあればそれを使用
+      setEditContent(contract.editedContent);
+      setViewMode('edit');
+    } else {
+      // なければPDFからテキストを抽出
+      const success = await extractText();
+      if (success) {
+        setViewMode('edit');
+      }
+    }
+  };
+
+  // 取引先一覧を取得
+  const fetchCounterparties = async () => {
+    try {
+      const response = await fetch('/api/counterparties');
+      if (response.ok) {
+        const data = await response.json();
+        setCounterparties(data.counterparties || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch counterparties:', err);
+    }
+  };
+
+  // 設定ダイアログを開く
+  const handleOpenSettings = () => {
+    setSelectedCounterpartyId(contract?.counterpartyId || '');
+    setSelectedOurPosition(contract?.ourPosition || '');
+    fetchCounterparties();
+    setSettingsOpen(true);
+  };
+
+  // 設定を保存
+  const handleSaveSettings = async () => {
+    try {
+      setSavingSettings(true);
+      const response = await fetch(`/api/contracts/${contractId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          counterpartyId: selectedCounterpartyId || null,
+          ourPosition: selectedOurPosition || null,
+        }),
+      });
+      if (response.ok) {
+        setSuccess('設定を保存しました');
+        setSettingsOpen(false);
+        fetchContract();
+      } else {
+        setError('設定の保存に失敗しました');
+      }
+    } catch (err) {
+      setError('設定の保存に失敗しました');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // 署名欄を生成
+  const [generatingSignature, setGeneratingSignature] = React.useState(false);
+  const handleGenerateSignature = async () => {
+    try {
+      setGeneratingSignature(true);
+      const response = await fetch(`/api/contracts/${contractId}/signature`);
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || '署名欄の生成に失敗しました');
+      }
+      const data = await response.json();
+
+      // エディタに署名欄を挿入（プレースホルダーがあれば置き換え）
+      if (editorInstance) {
+        let currentContent = editorInstance.getHTML();
+        // プレースホルダーを削除
+        currentContent = currentContent.replace(/<div class="signature-placeholder"[^>]*>[\s\S]*?<\/div>/g, '');
+        // 既存の署名欄があれば削除
+        currentContent = currentContent.replace(/<div class="signature-section"[^>]*>[\s\S]*?<\/div>/g, '');
+        // 新しい署名欄を追加
+        const newContent = currentContent.trim() + '\n' + data.signatureHtml;
+        editorInstance.commands.setContent(newContent);
+        setEditContent(newContent);
+        setSuccess('署名欄を挿入しました');
+      } else {
+        // エディタがない場合はeditContentに直接追加
+        let content = editContent;
+        content = content.replace(/<div class="signature-placeholder"[^>]*>[\s\S]*?<\/div>/g, '');
+        content = content.replace(/<div class="signature-section"[^>]*>[\s\S]*?<\/div>/g, '');
+        setEditContent(content.trim() + '\n' + data.signatureHtml);
+        setSuccess('署名欄を生成しました。編集モードで確認してください。');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '署名欄の生成に失敗しました');
+    } finally {
+      setGeneratingSignature(false);
+    }
+  };
+
   // バージョン履歴を取得
   const fetchVersions = async () => {
     try {
@@ -174,6 +299,28 @@ export default function ContractDetailPage() {
   const handleOpenHistory = () => {
     setHistoryOpen(true);
     fetchVersions();
+  };
+
+  // レポートをダウンロード
+  const handleDownloadReport = async () => {
+    try {
+      const response = await fetch(`/api/contracts/${contractId}/report`);
+      if (!response.ok) {
+        throw new Error('レポートの生成に失敗しました');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${contract?.contractTitle || 'contract'}_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      setSuccess('レポートをダウンロードしました');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'レポートのダウンロードに失敗しました');
+    }
   };
 
   // バージョンをプレビュー
@@ -268,45 +415,24 @@ export default function ContractDetailPage() {
     return content.replace(/track-pending/g, 'track-confirmed');
   };
 
-  const finalizeChanges = (content: string): string => {
-    return content.replace(/track-confirmed/g, 'track-finalized');
-  };
-
-  const handleToggleEditMode = async () => {
-    if (editMode) {
-      // 編集内容を保存（pending → confirmed に変換）
-      const confirmedContent = confirmChanges(editContent);
-      try {
-        const response = await fetch(`/api/contracts/${contractId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ editedContent: confirmedContent }),
-        });
-        if (response.ok) {
-          setSuccess('契約書を保存しました');
-          // contractのeditedContentを更新
-          setContract(prev => prev ? { ...prev, editedContent: confirmedContent } : prev);
-          setEditContent(confirmedContent);
-        } else {
-          setError('保存に失敗しました');
-        }
-      } catch {
+  // コンテンツを保存
+  const handleSaveContent = async () => {
+    const confirmedContent = confirmChanges(editContent);
+    try {
+      const response = await fetch(`/api/contracts/${contractId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editedContent: confirmedContent }),
+      });
+      if (response.ok) {
+        setSuccess('契約書を保存しました');
+        setContract(prev => prev ? { ...prev, editedContent: confirmedContent } : prev);
+        setEditContent(confirmedContent);
+      } else {
         setError('保存に失敗しました');
       }
-      setEditMode(false);
-    } else {
-      // 編集モードに入る - 保存済みの内容があればそれを使う（confirmed → finalized に変換）
-      if (contract?.editedContent) {
-        const finalizedContent = finalizeChanges(contract.editedContent);
-        setEditContent(finalizedContent);
-        setEditMode(true);
-      } else {
-        // なければPDFからテキストを抽出
-        const success = await extractText();
-        if (success) {
-          setEditMode(true);
-        }
-      }
+    } catch {
+      setError('保存に失敗しました');
     }
   };
 
@@ -314,190 +440,133 @@ export default function ContractDetailPage() {
     setEditContent(content);
   };
 
-  // リスクの修正案を反映（修正後テキストで直接置換）
-  const handleApplySuggestion = (riskId: string, originalText: string, suggestedText: string, riskType?: string) => {
-    // 既に反映済みの場合は何もしない
-    if (appliedRisks.includes(riskId)) return;
+  // リスクが適用済みかどうかをリアルタイムで判定
+  const isRiskApplied = React.useCallback((risk: RiskItem): boolean => {
+    if (!risk.suggestedText || !editContent) return false;
+    // suggestedTextがコンテンツに含まれていれば適用済み
+    return editContent.includes(risk.suggestedText);
+  }, [editContent]);
 
-    // 署名セクションの開始位置を検出
-    const findSignatureSectionStart = (content: string): number => {
-      // 署名セクションのパターン
-      const signaturePatterns = [
-        /本契約[のに]?[（(]?成立[）)]?[のを]?証[するとし]/,
-        /以上[、,]?本契約/,
-        /本契約締結の証として/,
-        /<div[^>]*class="signature-section"/,
-        /令和\d+年\d+月\d+日/,
-        /甲\s*[：:]\s*住所/,
-        /甲\s*住所/,
-      ];
-
-      let earliestPos = content.length;
-      for (const pattern of signaturePatterns) {
-        const match = content.match(pattern);
-        if (match && match.index !== undefined && match.index < earliestPos) {
-          // HTMLタグの開始位置を見つける
-          const beforeMatch = content.substring(0, match.index);
-          const lastTagStart = beforeMatch.lastIndexOf('<');
-          earliestPos = lastTagStart !== -1 ? lastTagStart : match.index;
-        }
-      }
-      return earliestPos;
-    };
+  // リスクの修正案を反映（originalText→suggestedTextの部分置換）
+  const handleApplySuggestion = (
+    originalText: string,
+    suggestedText: string
+  ) => {
+    // 既に反映済みの場合は何もしない（コンテンツに含まれている場合）
+    if (editContent.includes(suggestedText)) return;
 
     // ハイライト付きで置換テキストを生成
-    const wrapWithHighlight = (text: string, isNew: boolean = false) => {
-      if (isNew) {
-        return `<ins class="track-insertion track-pending" style="background-color: #dcfce7; border-left: 4px solid #22c55e; padding-left: 8px; display: block; margin: 8px 0;">${text}</ins>`;
-      }
-      return `<mark class="ai-suggestion" style="background-color: #fef08a; border-bottom: 2px solid #eab308;">${text}</mark>`;
+    const wrapWithHighlight = (text: string) => {
+      return `<mark class="ai-suggestion track-pending" style="background-color: #fef9c3; border-left: 3px solid #eab308; padding-left: 6px; display: inline;">${text}</mark>`;
+    };
+
+    // テキストを正規化（比較用）
+    const normalizeForSearch = (text: string): string => {
+      return text
+        .replace(/\s+/g, '') // 全ての空白を削除
+        .replace(/[。、．，]/g, '') // 句読点を削除
+        .toLowerCase();
+    };
+
+    // HTMLからテキストを抽出
+    const extractTextFromHtml = (html: string): string => {
+      return html
+        .replace(/<[^>]+>/g, '') // タグを削除
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"');
     };
 
     const applyToContent = (content: string): { success: boolean; newContent: string } => {
-      const signatureStart = findSignatureSectionStart(content);
-
-      // デバッグ用：マッチング情報を出力
-      if (process.env.NODE_ENV === 'development') {
-        console.log('=== Apply Suggestion Debug ===');
-        console.log('Original Text:', originalText.substring(0, 50) + '...');
-        console.log('Suggested Text:', suggestedText.substring(0, 50) + '...');
-      }
-
-      // 1. ファジーマッチングで最適な箇所を見つける（類似度70%以上）
-      const bestMatch = findBestMatch(content, originalText, 70);
-
-      if (bestMatch) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`Found match with ${bestMatch.similarity}% similarity`);
-          console.log('Matched text:', bestMatch.innerText.substring(0, 50) + '...');
-        }
-
-        const highlighted = wrapWithHighlight(suggestedText);
-        const newContent = content.substring(0, bestMatch.startIndex) +
-          bestMatch.tag.replace(bestMatch.innerText, highlighted) +
-          content.substring(bestMatch.endIndex);
-
+      // まず元のテキストを直接検索
+      if (content.includes(originalText)) {
+        const newContent = content.replace(
+          originalText,
+          wrapWithHighlight(suggestedText)
+        );
+        console.log('Direct replacement successful');
         return { success: true, newContent };
       }
 
-      // 2. 前方一致でフォールバック検索（先頭15文字、類似度80%以上）
-      const prefixMatch = findByPrefix(content, originalText, 15, 80);
+      // 段落（<p>タグ）単位で検索
+      const paragraphPattern = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+      let match;
+      const normalizedOriginal = normalizeForSearch(originalText);
 
-      if (prefixMatch) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`Found prefix match with ${prefixMatch.similarity}% similarity`);
-        }
+      while ((match = paragraphPattern.exec(content)) !== null) {
+        const paragraphHtml = match[0];
+        const paragraphText = extractTextFromHtml(match[1]);
+        const normalizedParagraph = normalizeForSearch(paragraphText);
 
-        const highlighted = wrapWithHighlight(suggestedText);
-        const newContent = content.substring(0, prefixMatch.startIndex) +
-          prefixMatch.tag.replace(prefixMatch.innerText, highlighted) +
-          content.substring(prefixMatch.endIndex);
+        // 正規化したテキストで比較
+        if (normalizedParagraph.includes(normalizedOriginal)) {
+          // この段落内でoriginalTextを探して置換
+          // 元のテキストの最初と最後の数文字で位置を特定
+          const originalChars = originalText.replace(/\s+/g, '');
+          const firstChars = originalChars.substring(0, 10);
+          const lastChars = originalChars.substring(originalChars.length - 10);
 
-        return { success: true, newContent };
-      }
+          // 段落内のテキストを置換
+          const newParagraphContent = match[1].replace(
+            new RegExp(`([^>]*)${escapeRegExp(firstChars.charAt(0))}[\\s\\S]*?${escapeRegExp(lastChars.charAt(lastChars.length - 1))}([^<]*)`, 'i'),
+            (fullMatch) => {
+              // 見つかった部分をハイライト付きで置換
+              return wrapWithHighlight(suggestedText);
+            }
+          );
 
-      // デバッグ情報を出力
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('No match found. Falling back to adding new article.');
-        debugMatch(content.substring(0, 200), originalText);
-      }
-
-      // 4. 条項が欠如している場合（新規追加）- 署名セクションの前に挿入
-      const h3Matches = [...content.matchAll(/<h3[^>]*>第(\d+)条[^<]*<\/h3>/g)];
-
-      // 署名セクションより前の条項のみをフィルタ
-      const articlesBeforeSignature = h3Matches.filter(m => (m.index || 0) < signatureStart);
-
-      // 関連する条項を探す（riskTypeに基づいて）
-      const findRelatedArticleIndex = (): number => {
-        if (!riskType) return -1;
-
-        const keywords: Record<string, string[]> = {
-          '損害賠償': ['損害', '賠償', '責任', '補償'],
-          '契約解除': ['解除', '解約', '終了'],
-          '知的財産': ['知的財産', '著作権', '特許', '成果物'],
-          '秘密保持': ['秘密', '機密', '守秘'],
-          '競業避止': ['競業', '競合'],
-          '支払': ['報酬', '支払', '対価', '代金'],
-        };
-
-        let relatedKeywords: string[] = [];
-        for (const [key, kws] of Object.entries(keywords)) {
-          if (riskType.includes(key)) {
-            relatedKeywords = kws;
-            break;
+          // 置換が成功したか確認
+          if (newParagraphContent !== match[1]) {
+            const newContent = content.replace(paragraphHtml, `<p${match[0].match(/<p([^>]*)>/)?.[1] || ''}>${newParagraphContent}</p>`);
+            console.log('Paragraph-based replacement successful');
+            return { success: true, newContent };
           }
         }
-
-        for (let i = 0; i < articlesBeforeSignature.length; i++) {
-          const matchText = articlesBeforeSignature[i][0];
-          if (relatedKeywords.some(kw => matchText.includes(kw))) {
-            return i;
-          }
-        }
-        return -1;
-      };
-
-      if (articlesBeforeSignature.length > 0) {
-        // 最後の条項の番号を取得（署名セクション直前の条項）
-        const lastArticle = articlesBeforeSignature[articlesBeforeSignature.length - 1];
-        const lastArticleNum = parseInt(lastArticle[1]);
-        const newArticleNum = lastArticleNum + 1;
-
-        // 新しい条項を作成（ハイライト付き）
-        const newArticleContent = `<h3>第${newArticleNum}条（${riskType || '追加条項'}）</h3>\n<p>${suggestedText}</p>`;
-        const newArticle = `\n${wrapWithHighlight(newArticleContent, true)}\n`;
-
-        // 最後の条項の終了位置を見つける（次のh3または署名セクションの前）
-        const lastArticleStart = lastArticle.index!;
-        const afterLastArticle = content.substring(lastArticleStart + lastArticle[0].length);
-
-        // 次のh3タグを探す
-        const nextH3InContent = afterLastArticle.match(/<h3[^>]*>/);
-        let insertPos: number;
-
-        if (nextH3InContent && nextH3InContent.index !== undefined) {
-          // 次のh3の前に挿入
-          insertPos = lastArticleStart + lastArticle[0].length + nextH3InContent.index;
-        } else {
-          // 署名セクションの前に挿入
-          insertPos = signatureStart;
-        }
-
-        // 署名セクションより前であることを確認
-        insertPos = Math.min(insertPos, signatureStart);
-
-        // 挿入位置の直前で最後の</p>を探す
-        const sectionContent = content.substring(lastArticleStart, insertPos);
-        const lastPClose = sectionContent.lastIndexOf('</p>');
-        if (lastPClose !== -1) {
-          insertPos = lastArticleStart + lastPClose + 4;
-        }
-
-        const newContent = content.substring(0, insertPos) + newArticle + content.substring(insertPos);
-        return { success: true, newContent };
       }
 
-      // 5. h3が全くない場合は署名セクションの前に追加（第1条として）
-      const newArticle = wrapWithHighlight(
-        `<h3>第1条（${riskType || '追加条項'}）</h3>\n<p>${suggestedText}</p>`,
-        true
-      );
-      const insertPos = signatureStart < content.length ? signatureStart : content.length;
-      return { success: true, newContent: content.substring(0, insertPos) + '\n' + newArticle + '\n' + content.substring(insertPos) };
+      // 最後の手段：正規化なしで部分一致を試みる
+      // originalTextの最初の10文字と最後の10文字で検索
+      const origTrimmed = originalText.trim();
+      if (origTrimmed.length > 20) {
+        const startText = origTrimmed.substring(0, 15);
+        const endText = origTrimmed.substring(origTrimmed.length - 15);
+
+        // 開始と終了テキストの間にあるテキストを置換
+        const fuzzyPattern = new RegExp(
+          `(${escapeRegExp(startText)}[\\s\\S]*?${escapeRegExp(endText)})`,
+          'i'
+        );
+        const fuzzyMatch = content.match(fuzzyPattern);
+
+        if (fuzzyMatch) {
+          const newContent = content.replace(
+            fuzzyMatch[1],
+            wrapWithHighlight(suggestedText)
+          );
+          console.log('Fuzzy replacement successful');
+          return { success: true, newContent };
+        }
+      }
+
+      console.error('Could not find original text to replace');
+      console.log('Original text:', originalText.substring(0, 50) + '...');
+      return { success: false, newContent: content };
     };
-
-    // 反映済みリストに追加
-    setAppliedRisks(prev => [...prev, riskId]);
 
     if (!editContent) {
       extractText().then((success) => {
         if (success) {
-          setEditMode(true);
+          setViewMode('edit');
           setTimeout(() => {
             setEditContent((prev) => {
               const result = applyToContent(prev);
-              setSuccess('修正を反映しました（黄色ハイライト部分）');
+              if (result.success) {
+                setSuccess('修正を反映しました（黄色ハイライト部分）');
+              } else {
+                setError('該当テキストが見つかりませんでした');
+              }
               return result.newContent;
             });
           }, 100);
@@ -506,9 +575,18 @@ export default function ContractDetailPage() {
     } else {
       const result = applyToContent(editContent);
       setEditContent(result.newContent);
-      setEditMode(true);
-      setSuccess('修正を反映しました（黄色ハイライト部分）');
+      setViewMode('edit');
+      if (result.success) {
+        setSuccess('修正を反映しました（黄色ハイライト部分）');
+      } else {
+        setError('該当テキストが見つかりませんでした');
+      }
     }
+  };
+
+  // 正規表現用エスケープ
+  const escapeRegExp = (string: string): string => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   };
 
   // PDFエクスポート（html2pdf.js使用）
@@ -519,9 +597,19 @@ export default function ContractDetailPage() {
       // html2pdf.jsを動的にインポート
       const html2pdf = (await import('html2pdf.js')).default;
 
+      // PDF用にコンテンツを整形（AI提案のマークを削除）
+      let pdfContent = editContent;
+
+      // <mark>タグを削除して中のテキストだけ残す
+      pdfContent = pdfContent.replace(/<mark[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
+
+      // track-pending/confirmed クラスを削除
+      pdfContent = pdfContent.replace(/\s*class="[^"]*track-[^"]*"/gi, '');
+      pdfContent = pdfContent.replace(/\s*style="[^"]*background-color[^"]*"/gi, '');
+
       // PDF用のコンテナを作成
       const element = document.createElement('div');
-      element.innerHTML = editContent;
+      element.innerHTML = pdfContent;
       element.style.fontFamily = '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif';
       element.style.fontSize = '12pt';
       element.style.lineHeight = '1.8';
@@ -529,12 +617,14 @@ export default function ContractDetailPage() {
       element.style.padding = '20mm';
       element.style.maxWidth = '170mm';
 
-      // 変更追跡のスタイルをPDF用に調整（track-finalized は通常表示）
+      // 変更追跡のスタイルをPDF用に調整
       const style = document.createElement('style');
       style.textContent = `
         h1 { font-size: 16pt; text-align: center; margin-bottom: 2em; }
         h3 { font-size: 12pt; font-weight: bold; margin-top: 1.5em; }
         p { text-align: justify; margin: 0.8em 0; text-indent: 1em; }
+        mark { background-color: transparent !important; }
+        .ai-suggestion { background-color: transparent !important; border-left: none !important; padding-left: 0 !important; }
         .track-finalized { background-color: transparent !important; border-left: none !important; }
         del.track-deletion.track-finalized { text-decoration: line-through; opacity: 0.5; }
         ins.track-insertion.track-finalized { text-decoration: none; }
@@ -585,9 +675,10 @@ export default function ContractDetailPage() {
     return config[severity as keyof typeof config] || config.low;
   };
 
-  // 反映済みのリスクを除外
+  // 反映済みのリスクを除外（リアルタイム判定）
   const riskItems = contract?.review?.riskItems || [];
-  const activeRisks = riskItems.filter((risk) => !appliedRisks.includes(risk.id));
+  const activeRisks = riskItems.filter((risk) => !isRiskApplied(risk));
+  const appliedCount = riskItems.filter((risk) => isRiskApplied(risk)).length;
 
   const riskSummary = {
     high: activeRisks.filter((r) => r.riskLevel === 'high').length,
@@ -598,7 +689,6 @@ export default function ContractDetailPage() {
   // スコアを動的に計算（リスクを修正するとスコアが上がる）
   const baseScore = contract?.review?.overallScore || 0;
   const totalRiskCount = riskItems.length;
-  const appliedCount = appliedRisks.length;
 
   // リスク1件修正ごとにスコアが改善（最大100点まで）
   const scoreImprovement = totalRiskCount > 0
@@ -690,14 +780,79 @@ export default function ContractDetailPage() {
               </Box>
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            {editMode ? (
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            {/* ビューモード切り替え */}
+            <Box sx={{ display: 'flex', bgcolor: '#f4f4f5', borderRadius: 1, p: 0.5 }}>
+              <Button
+                size="small"
+                onClick={() => setViewMode('pdf')}
+                sx={{
+                  px: 2,
+                  py: 0.5,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                  borderRadius: 0.5,
+                  bgcolor: viewMode === 'pdf' ? 'white' : 'transparent',
+                  color: viewMode === 'pdf' ? '#1e40af' : '#71717a',
+                  boxShadow: viewMode === 'pdf' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+                  '&:hover': { bgcolor: viewMode === 'pdf' ? 'white' : '#e4e4e7' },
+                }}
+              >
+                PDFビュー
+              </Button>
+              <Button
+                size="small"
+                onClick={handleSwitchToEdit}
+                disabled={extracting}
+                sx={{
+                  px: 2,
+                  py: 0.5,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                  borderRadius: 0.5,
+                  bgcolor: viewMode === 'edit' ? 'white' : 'transparent',
+                  color: viewMode === 'edit' ? '#1e40af' : '#71717a',
+                  boxShadow: viewMode === 'edit' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+                  '&:hover': { bgcolor: viewMode === 'edit' ? 'white' : '#e4e4e7' },
+                }}
+              >
+                {extracting ? 'テキスト抽出中...' : '編集モード'}
+              </Button>
+            </Box>
+
+            <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+
+            {/* 編集モード用ボタン */}
+            {viewMode === 'edit' && (
               <>
+                <Tooltip title="取引先・自社情報から署名欄を自動生成">
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={generatingSignature ? <CircularProgress size={16} color="inherit" /> : <BusinessIcon />}
+                    onClick={handleGenerateSignature}
+                    disabled={generatingSignature}
+                    sx={{
+                      borderColor: '#6366f1',
+                      color: '#6366f1',
+                      textTransform: 'none',
+                      fontWeight: 600,
+                      '&:hover': {
+                        borderColor: '#4f46e5',
+                        bgcolor: '#eef2ff'
+                      }
+                    }}
+                  >
+                    署名欄を生成
+                  </Button>
+                </Tooltip>
                 <Button
                   variant="contained"
                   size="small"
                   startIcon={<SaveIcon />}
-                  onClick={handleToggleEditMode}
+                  onClick={handleSaveContent}
                   sx={{
                     bgcolor: '#1e40af',
                     color: 'white',
@@ -708,99 +863,46 @@ export default function ContractDetailPage() {
                 >
                   保存
                 </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<CancelIcon />}
-                  onClick={() => setEditMode(false)}
-                  sx={{
-                    borderColor: '#d1d5db',
-                    color: '#4b5563',
-                    textTransform: 'none',
-                    fontWeight: 600,
-                    '&:hover': {
-                      borderColor: '#9ca3af',
-                      bgcolor: '#f9fafb'
-                    }
-                  }}
-                >
-                  キャンセル
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={extracting ? <CircularProgress size={16} color="inherit" /> : <EditIcon />}
-                  onClick={handleToggleEditMode}
-                  disabled={extracting}
-                  sx={{
-                    bgcolor: '#1e40af',
-                    color: 'white',
-                    textTransform: 'none',
-                    fontWeight: 600,
-                    '&:hover': { bgcolor: '#1e3a8a' },
-                  }}
-                >
-                  {extracting ? 'テキスト抽出中...' : '編集'}
-                </Button>
-                <Tooltip title="履歴を表示">
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<HistoryIcon />}
-                    onClick={handleOpenHistory}
-                    sx={{
-                      borderColor: '#d1d5db',
-                      color: '#4b5563',
-                      textTransform: 'none',
-                      fontWeight: 600,
-                      '&:hover': {
-                        borderColor: '#9ca3af',
-                        bgcolor: '#f9fafb'
-                      }
-                    }}
-                  >
-                    履歴
-                  </Button>
-                </Tooltip>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<ShareIcon />}
-                  sx={{
-                    borderColor: '#d1d5db',
-                    color: '#4b5563',
-                    textTransform: 'none',
-                    fontWeight: 600,
-                    '&:hover': {
-                      borderColor: '#9ca3af',
-                      bgcolor: '#f9fafb'
-                    }
-                  }}
-                >
-                  共有
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<DownloadIcon />}
-                  sx={{
-                    borderColor: '#d1d5db',
-                    color: '#4b5563',
-                    textTransform: 'none',
-                    fontWeight: 600,
-                    '&:hover': {
-                      borderColor: '#9ca3af',
-                      bgcolor: '#f9fafb'
-                    }
-                  }}
-                >
-                  ダウンロード
-                </Button>
               </>
             )}
+
+            <Tooltip title="履歴を表示">
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<HistoryIcon />}
+                onClick={handleOpenHistory}
+                sx={{
+                  borderColor: '#d1d5db',
+                  color: '#4b5563',
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  '&:hover': {
+                    borderColor: '#9ca3af',
+                    bgcolor: '#f9fafb'
+                  }
+                }}
+              >
+                履歴
+              </Button>
+            </Tooltip>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<DownloadIcon />}
+              sx={{
+                borderColor: '#d1d5db',
+                color: '#4b5563',
+                textTransform: 'none',
+                fontWeight: 600,
+                '&:hover': {
+                  borderColor: '#9ca3af',
+                  bgcolor: '#f9fafb'
+                }
+              }}
+            >
+              ダウンロード
+            </Button>
           </Box>
         </Box>
 
@@ -816,10 +918,8 @@ export default function ContractDetailPage() {
         <Box
           sx={{
             flex: sidebarCollapsed ? 1 : { xs: 1, lg: 2 },
-            position: editMode ? 'relative' : 'sticky',
-            top: editMode ? 0 : 96,
+            position: 'relative',
             alignSelf: 'start',
-            maxHeight: editMode ? 'none' : 'calc(100vh - 120px)',
             overflow: 'hidden',
             transition: 'flex 0.3s ease',
           }}
@@ -829,9 +929,9 @@ export default function ContractDetailPage() {
             <Box sx={{ px: 2, py: 1.5, bgcolor: '#fafafa', borderBottom: '1px solid', borderColor: 'grey.200', display: 'flex', alignItems: 'center', gap: 1.5 }}>
               <PdfIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
               <Typography variant="subtitle2" fontWeight={700}>
-                {editMode ? '契約書を編集' : '契約書内容'}
+                {viewMode === 'edit' ? '契約書を編集' : '契約書プレビュー'}
               </Typography>
-              {editMode && (
+              {viewMode === 'edit' && (
                 <>
                   <Chip
                     label="編集中"
@@ -866,66 +966,83 @@ export default function ContractDetailPage() {
                 </>
               )}
             </Box>
-            {editMode ? (
-              <Box sx={{ overflowX: 'hidden' }}>
-                <ContractEditor
-                  content={editContent}
-                  onChange={handleContentChange}
-                  onEditorReady={setEditorInstance}
-                  contractId={contractId}
-                />
-              </Box>
-            ) : contract.editedContent ? (
-              // 編集済みコンテンツがある場合はそれを表示
+            {extracting ? (
+              // テキスト抽出中
               <Box
                 sx={{
                   p: 4,
                   bgcolor: 'white',
                   height: 'calc(100vh - 200px)',
                   minHeight: '600px',
-                  overflowY: 'auto',
-                  fontFamily: '"Noto Sans JP", sans-serif',
-                  fontSize: '14px',
-                  lineHeight: 1.8,
-                  '& h3': { fontWeight: 700, mt: 3, mb: 1 },
-                  '& p': { mb: 1 },
-                  '& del.track-deletion': {
-                    textDecoration: 'line-through',
-                    color: '#dc2626',
-                    bgcolor: '#fef2f2',
-                  },
-                  '& ins.track-insertion': {
-                    textDecoration: 'underline',
-                    color: '#16a34a',
-                    bgcolor: '#f0fdf4',
-                  },
-                }}
-                dangerouslySetInnerHTML={{ __html: contract.editedContent }}
-              />
-            ) : contract.fileUrl ? (
-              <Box
-                sx={{
-                  width: '100%',
-                  height: 'calc(100vh - 200px)',
-                  minHeight: '600px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                <iframe
-                  src={contract.fileUrl}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                  }}
-                  title="契約書PDF"
-                />
-              </Box>
-            ) : (
-              <Box sx={{ p: 4, textAlign: 'center' }}>
-                <PdfIcon sx={{ fontSize: 48, color: 'grey.400', mb: 2 }} />
-                <Typography variant="body2" color="text.secondary">
-                  PDFファイルを読み込めませんでした
+                <CircularProgress sx={{ mb: 2 }} />
+                <Typography variant="body1" color="text.secondary">
+                  PDFからテキストを抽出しています...
                 </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  しばらくお待ちください
+                </Typography>
+              </Box>
+            ) : viewMode === 'pdf' ? (
+              // PDFビュー
+              contract.fileUrl ? (
+                <Box
+                  sx={{
+                    height: 'calc(100vh - 200px)',
+                    minHeight: '600px',
+                    bgcolor: 'white',
+                  }}
+                >
+                  <iframe
+                    src={`${contract.fileUrl}#toolbar=0&navpanes=0&scrollbar=1`}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      border: 'none',
+                    }}
+                    title="契約書PDF"
+                  />
+                </Box>
+              ) : (
+                <Box
+                  sx={{
+                    p: 4,
+                    bgcolor: 'white',
+                    height: 'calc(100vh - 200px)',
+                    minHeight: '600px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <PdfIcon sx={{ fontSize: 64, color: 'grey.300', mb: 2 }} />
+                  <Typography variant="body1" color="text.secondary">
+                    PDFファイルがありません
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    sx={{ mt: 2 }}
+                    onClick={handleSwitchToEdit}
+                  >
+                    編集モードで開く
+                  </Button>
+                </Box>
+              )
+            ) : (
+              // 編集モード
+              <Box sx={{ overflowX: 'hidden' }}>
+                <ContractEditor
+                  content={editContent || contract.editedContent || ''}
+                  onChange={handleContentChange}
+                  onEditorReady={setEditorInstance}
+                  contractId={contractId}
+                />
               </Box>
             )}
           </Paper>
@@ -1350,11 +1467,11 @@ export default function ContractDetailPage() {
                             <Box />
                           )}
 
-                          {risk.suggestedText && risk.originalText && !appliedRisks.includes(risk.id) && (
+                          {risk.suggestedText && risk.originalText && !isRiskApplied(risk) && (
                             <Button
                               size="small"
                               variant="outlined"
-                              onClick={() => handleApplySuggestion(risk.id, risk.originalText!, risk.suggestedText!, risk.riskType)}
+                              onClick={() => handleApplySuggestion(risk.originalText!, risk.suggestedText!)}
                               sx={{
                                 fontSize: '0.75rem',
                                 py: 0.5,
@@ -1371,7 +1488,7 @@ export default function ContractDetailPage() {
                               反映する
                             </Button>
                           )}
-                          {appliedRisks.includes(risk.id) && (
+                          {isRiskApplied(risk) && (
                             <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
                               反映済み
                             </Typography>
@@ -1464,6 +1581,8 @@ export default function ContractDetailPage() {
               variant="outlined"
               fullWidth
               size="large"
+              onClick={handleDownloadReport}
+              startIcon={<DownloadIcon />}
               sx={{
                 borderColor: '#d1d5db',
                 color: '#4b5563',
@@ -1483,19 +1602,47 @@ export default function ContractDetailPage() {
 
           {/* 契約書情報 */}
           <Paper sx={{ p: 3, border: '1px solid', borderColor: 'grey.200' }}>
-            <Typography variant="h6" fontWeight={700} gutterBottom>
-              契約書情報
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="h6" fontWeight={700}>
+                契約書情報
+              </Typography>
+              <Button
+                size="small"
+                startIcon={<BusinessIcon />}
+                onClick={handleOpenSettings}
+                sx={{ textTransform: 'none' }}
+              >
+                設定
+              </Button>
+            </Box>
             <Divider sx={{ my: 2 }} />
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box>
                 <Typography variant="caption" color="text.secondary">ファイル名</Typography>
                 <Typography variant="body2">{contract.fileName}</Typography>
               </Box>
-              {contract.counterparty && (
+              {(contract.counterpartyRef || contract.counterparty) && (
                 <Box>
                   <Typography variant="caption" color="text.secondary">取引先</Typography>
-                  <Typography variant="body2">{contract.counterparty}</Typography>
+                  <Typography variant="body2">
+                    {contract.counterpartyRef?.name || contract.counterparty}
+                    {contract.counterpartyRef?.shortName && (
+                      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                        ({contract.counterpartyRef.shortName})
+                      </Typography>
+                    )}
+                  </Typography>
+                </Box>
+              )}
+              {contract.ourPosition && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">自社の立場</Typography>
+                  <Chip
+                    label={contract.ourPosition === 'kou' ? '甲' : '乙'}
+                    size="small"
+                    color={contract.ourPosition === 'kou' ? 'primary' : 'secondary'}
+                    sx={{ height: 22, fontSize: '0.75rem', fontWeight: 600 }}
+                  />
                 </Box>
               )}
               {contract.expiryDate && (
@@ -1643,6 +1790,63 @@ export default function ContractDetailPage() {
           )}
         </Box>
       </Drawer>
+
+      {/* 契約書設定ダイアログ */}
+      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>契約書設定</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>取引先</InputLabel>
+              <Select
+                value={selectedCounterpartyId}
+                label="取引先"
+                onChange={(e) => setSelectedCounterpartyId(e.target.value)}
+              >
+                <MenuItem value="">未設定</MenuItem>
+                {counterparties.map((cp) => (
+                  <MenuItem key={cp.id} value={cp.id}>
+                    {cp.name}
+                    {cp.shortName && ` (${cp.shortName})`}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                取引先が登録されていない場合は、
+                <Link href="/counterparties" style={{ color: '#1976d2' }}>取引先管理</Link>
+                から登録してください。
+              </Typography>
+            </Box>
+            <FormControl fullWidth>
+              <InputLabel>自社の立場</InputLabel>
+              <Select
+                value={selectedOurPosition}
+                label="自社の立場"
+                onChange={(e) => setSelectedOurPosition(e.target.value)}
+              >
+                <MenuItem value="">未設定</MenuItem>
+                <MenuItem value="kou">甲（主たる当事者・発注者側）</MenuItem>
+                <MenuItem value="otsu">乙（従たる当事者・受注者側）</MenuItem>
+              </Select>
+            </FormControl>
+            <Alert severity="info" sx={{ mt: 1 }}>
+              自社の立場を設定すると、署名欄の生成時に正しい順序で表示されます。
+            </Alert>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSettingsOpen(false)}>キャンセル</Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveSettings}
+            disabled={savingSettings}
+          >
+            {savingSettings ? '保存中...' : '保存'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
     </Box>
   );

@@ -20,6 +20,11 @@ model Organization {
   industry        String?
   employeeCount   Int?
 
+  // 自社情報（署名欄用）
+  companyAddress        String?   // 住所
+  companyRepresentative String?   // 代表者名
+  companyRepTitle       String?   // 代表者肩書（代表取締役など）
+
   // サブスクリプション
   stripeCustomerId     String?  @unique
   stripeSubscriptionId String?  @unique
@@ -39,8 +44,42 @@ model Organization {
   consultations   LawyerConsultation[]
   auditLogs       AuditLog[]
   invitations     Invitation[]
+  counterparties  Counterparty[]
 
   @@index([planType])
+}
+
+// ============================================================
+// 取引先管理
+// ============================================================
+
+model Counterparty {
+  id              String    @id @default(uuid())
+  organizationId  String
+
+  // 基本情報
+  name            String    // 会社名
+  shortName       String?   // 略称
+  address         String?   // 住所
+  representative  String?   // 代表者名
+  repTitle        String?   // 代表者肩書（代表取締役など）
+
+  // 連絡先
+  email           String?
+  phone           String?
+
+  // 分類
+  category        String?   // 顧客、仕入先、パートナーなど
+  notes           String?   @db.Text
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contracts       Contract[]
+
+  @@index([organizationId])
+  @@index([name])
 }
 
 // ============================================================
@@ -86,7 +125,9 @@ model Contract {
   // 契約情報
   contractType    String?
   contractTitle   String?
-  counterparty    String?   // 取引先名
+  counterparty    String?   // 取引先名（旧フィールド、後方互換用）
+  counterpartyId  String?   // 取引先マスタへの参照
+  ourPosition     String?   // 自社の立場: kou(甲), otsu(乙)
   contractDate    DateTime?
   expiryDate      DateTime?
   autoRenewal     Boolean   @default(false)
@@ -97,6 +138,9 @@ model Contract {
 
   // 編集済みコンテンツ（HTML）
   editedContent   String?   @db.Text
+
+  // 構造化コンテンツ（JSON）
+  structuredContent Json?
 
   // バージョン管理
   currentVersion  Int       @default(1)
@@ -111,6 +155,7 @@ model Contract {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   uploadedByUser  User         @relation("UploadedBy", fields: [uploadedBy], references: [id])
   folder          Folder?      @relation(fields: [folderId], references: [id])
+  counterpartyRef Counterparty? @relation(fields: [counterpartyId], references: [id])
 
   review          ContractReview?
   consultations   LawyerConsultation[]
@@ -122,6 +167,7 @@ model Contract {
   @@index([status])
   @@index([expiryDate])
   @@index([folderId])
+  @@index([counterpartyId])
 }
 
 // ============================================================
@@ -182,10 +228,13 @@ model RiskItem {
   riskType      String   // 損害賠償、解除条件、遅延損害金 etc.
   riskLevel     String   // high, medium, low
 
-  // 該当箇所
-  pageNumber    Int?
-  sectionTitle  String?
-  originalText  String?  @db.Text
+  // 該当箇所（構造化データ対応）
+  articleNumber   Int?     // 第X条の番号
+  paragraphNumber Int?     // 項番号
+  articleId       String?  // 条項のUUID
+  pageNumber      Int?
+  sectionTitle    String?
+  originalText    String?  @db.Text
 
   // 修正案
   suggestedText String?  @db.Text
@@ -265,6 +314,104 @@ model Folder {
 }
 
 // ============================================================
+// 弁護士マスタ
+// ============================================================
+
+model Lawyer {
+  id              String   @id @default(uuid())
+  name            String
+  email           String   @unique
+  phone           String?
+
+  // プロフィール
+  imageUrl        String?
+  bio             String?  @db.Text
+  yearsOfExperience Int?
+
+  // 専門分野（複数可）
+  specializations String[]  // 契約法、労働法、知財 etc.
+
+  // 資格・所属
+  barNumber       String?   // 弁護士登録番号
+  lawFirm         String?   // 所属事務所
+  prefecture      String?   // 所在地
+
+  // 料金
+  hourlyRate      Int?      // 時給（円）
+  consultationFee Int?      // 初回相談料（円）
+
+  // 評価
+  rating          Float     @default(0)
+  reviewCount     Int       @default(0)
+
+  // ステータス
+  isActive        Boolean   @default(true)
+  isVerified      Boolean   @default(false)
+
+  // 対応可能な相談タイプ
+  availableTypes  String[]  // chat, video, review
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  consultations   LawyerConsultation[]
+  availabilities  LawyerAvailability[]
+  reviews         LawyerReview[]
+
+  @@index([isActive])
+  @@index([rating])
+  @@index([specializations])
+}
+
+// ============================================================
+// 弁護士のスケジュール
+// ============================================================
+
+model LawyerAvailability {
+  id              String   @id @default(uuid())
+  lawyerId        String
+
+  dayOfWeek       Int      // 0-6 (日-土)
+  startTime       String   // "09:00"
+  endTime         String   // "18:00"
+
+  // 特定日の設定（繰り返しではなく特定日）
+  specificDate    DateTime?
+  isAvailable     Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+
+  lawyer          Lawyer   @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+
+  @@index([lawyerId])
+  @@index([dayOfWeek])
+  @@index([specificDate])
+}
+
+// ============================================================
+// 弁護士レビュー
+// ============================================================
+
+model LawyerReview {
+  id              String   @id @default(uuid())
+  lawyerId        String
+  consultationId  String   @unique
+
+  rating          Int      // 1-5
+  comment         String?  @db.Text
+
+  isAnonymous     Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+
+  lawyer          Lawyer   @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+  consultation    LawyerConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
+  @@index([lawyerId])
+  @@index([rating])
+}
+
+// ============================================================
 // 弁護士相談
 // ============================================================
 
@@ -274,7 +421,7 @@ model LawyerConsultation {
   organizationId  String
   requestedBy     String
 
-  lawyerId        String?   // 弁護士マスタ参照（今回は省略）
+  lawyerId        String?
   consultationType String   // chat, video, review
 
   status          String    @default("pending") // pending, in_progress, completed
@@ -295,10 +442,13 @@ model LawyerConsultation {
   contract        Contract?      @relation(fields: [contractId], references: [id])
   organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   requestedByUser User           @relation("RequestedBy", fields: [requestedBy], references: [id])
+  lawyer          Lawyer?        @relation(fields: [lawyerId], references: [id])
+  review          LawyerReview?
 
   @@index([organizationId])
   @@index([requestedBy])
   @@index([status])
+  @@index([lawyerId])
 }
 
 // ============================================================

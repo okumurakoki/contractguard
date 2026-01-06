@@ -37,10 +37,23 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { counterparty, variables, notes } = body;
+    const { counterparty, counterpartyId, variables, notes } = body;
 
     if (!counterparty) {
       return NextResponse.json({ error: '契約相手は必須です' }, { status: 400 });
+    }
+
+    // 取引先IDが指定されている場合、存在確認
+    if (counterpartyId) {
+      const counterpartyRef = await prisma.counterparty.findFirst({
+        where: {
+          id: counterpartyId,
+          organizationId: user.organizationId,
+        },
+      });
+      if (!counterpartyRef) {
+        return NextResponse.json({ error: '取引先が見つかりません' }, { status: 404 });
+      }
     }
 
     // テンプレートの変数を置換
@@ -78,6 +91,7 @@ export async function POST(
         contractType: template.category,
         contractTitle,
         counterparty,
+        counterpartyId: counterpartyId || null,
         status: 'draft',
         editedContent: content,
       },

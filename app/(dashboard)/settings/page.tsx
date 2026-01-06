@@ -56,12 +56,12 @@ export default function SettingsPage() {
 
   // 組織設定
   const [orgName, setOrgName] = React.useState('');
-  const [orgPostalCode, setOrgPostalCode] = React.useState('');
   const [orgAddress, setOrgAddress] = React.useState('');
-  const [orgPhone, setOrgPhone] = React.useState('');
   const [orgEmail, setOrgEmail] = React.useState('');
   const [orgRepresentative, setOrgRepresentative] = React.useState('');
-  const [orgWebsite, setOrgWebsite] = React.useState('');
+  const [orgRepTitle, setOrgRepTitle] = React.useState('');
+  const [orgLoading, setOrgLoading] = React.useState(false);
+  const [orgSaving, setOrgSaving] = React.useState(false);
 
   // 通知設定
   const [emailNotif, setEmailNotif] = React.useState(true);
@@ -76,6 +76,30 @@ export default function SettingsPage() {
       setPhone(user.primaryPhoneNumber?.phoneNumber || '');
     }
   }, [isLoaded, user]);
+
+  // 組織情報を取得
+  const fetchOrganization = async () => {
+    try {
+      setOrgLoading(true);
+      const response = await fetch('/api/organization');
+      if (response.ok) {
+        const data = await response.json();
+        setOrgName(data.organization.name || '');
+        setOrgAddress(data.organization.companyAddress || '');
+        setOrgRepresentative(data.organization.companyRepresentative || '');
+        setOrgRepTitle(data.organization.companyRepTitle || '');
+        setOrgEmail(data.organization.billingEmail || '');
+      }
+    } catch (err) {
+      console.error('Failed to fetch organization:', err);
+    } finally {
+      setOrgLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchOrganization();
+  }, []);
 
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -93,8 +117,31 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSaveOrganization = () => {
-    setSuccess('組織情報を更新しました');
+  const handleSaveOrganization = async () => {
+    try {
+      setOrgSaving(true);
+      const response = await fetch('/api/organization', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: orgName,
+          companyAddress: orgAddress,
+          companyRepresentative: orgRepresentative,
+          companyRepTitle: orgRepTitle,
+          billingEmail: orgEmail,
+        }),
+      });
+      if (response.ok) {
+        setSuccess('組織情報を更新しました');
+      } else {
+        const data = await response.json();
+        setSuccess(data.error || '組織情報の更新に失敗しました');
+      }
+    } catch {
+      setSuccess('組織情報の更新に失敗しました');
+    } finally {
+      setOrgSaving(false);
+    }
   };
 
   const handleSaveNotifications = () => {
@@ -206,36 +253,77 @@ export default function SettingsPage() {
         {/* 組織情報 */}
         <TabPanel value={tabValue} index={1}>
           <Box sx={{ maxWidth: 600, mx: 'auto' }}>
-            <Box sx={{ display: 'grid', gap: 3 }}>
-              <TextField label="組織名・法人名" fullWidth required value={orgName} onChange={(e) => setOrgName(e.target.value)} />
-              <TextField label="代表者名" fullWidth value={orgRepresentative} onChange={(e) => setOrgRepresentative(e.target.value)} />
-
-              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 2 }}>
-                <TextField label="郵便番号" fullWidth value={orgPostalCode} onChange={(e) => setOrgPostalCode(e.target.value)} placeholder="150-0001" />
-                <TextField label="都道府県・市区町村" fullWidth value={orgAddress} onChange={(e) => setOrgAddress(e.target.value)} />
+            {orgLoading ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {[...Array(5)].map((_, i) => (
+                  <Skeleton key={i} variant="rectangular" height={56} />
+                ))}
               </Box>
+            ) : (
+              <>
+                <Alert severity="info" sx={{ mb: 3 }}>
+                  署名欄の自動生成に使用されます。正確な情報を入力してください。
+                </Alert>
+                <Box sx={{ display: 'grid', gap: 3 }}>
+                  <TextField
+                    label="組織名・法人名"
+                    fullWidth
+                    required
+                    value={orgName}
+                    onChange={(e) => setOrgName(e.target.value)}
+                    placeholder="株式会社サンプル"
+                  />
+                  <TextField
+                    label="住所"
+                    fullWidth
+                    multiline
+                    rows={2}
+                    value={orgAddress}
+                    onChange={(e) => setOrgAddress(e.target.value)}
+                    placeholder="東京都渋谷区神宮前1-1-1 サンプルビル3F"
+                  />
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 2 }}>
+                    <TextField
+                      label="代表者肩書"
+                      fullWidth
+                      value={orgRepTitle}
+                      onChange={(e) => setOrgRepTitle(e.target.value)}
+                      placeholder="代表取締役"
+                    />
+                    <TextField
+                      label="代表者名"
+                      fullWidth
+                      value={orgRepresentative}
+                      onChange={(e) => setOrgRepresentative(e.target.value)}
+                      placeholder="山田 太郎"
+                    />
+                  </Box>
+                  <TextField
+                    label="請求先メールアドレス"
+                    type="email"
+                    fullWidth
+                    value={orgEmail}
+                    onChange={(e) => setOrgEmail(e.target.value)}
+                  />
+                </Box>
 
-              <TextField label="番地・建物名" fullWidth placeholder="神宮前1-1-1 サンプルビル3F" />
-
-              <TextField label="電話番号" fullWidth value={orgPhone} onChange={(e) => setOrgPhone(e.target.value)} />
-              <TextField label="メールアドレス" type="email" fullWidth value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} />
-              <TextField label="ウェブサイト" type="url" fullWidth value={orgWebsite} onChange={(e) => setOrgWebsite(e.target.value)} placeholder="https://" />
-            </Box>
-
-            <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end' }}>
-              <Button
-                variant="contained"
-                onClick={handleSaveOrganization}
-                sx={{
-                  bgcolor: 'black',
-                  color: 'white',
-                  px: 4,
-                  '&:hover': { bgcolor: 'grey.800' },
-                }}
-              >
-                保存
-              </Button>
-            </Box>
+                <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="contained"
+                    onClick={handleSaveOrganization}
+                    disabled={orgSaving}
+                    sx={{
+                      bgcolor: 'black',
+                      color: 'white',
+                      px: 4,
+                      '&:hover': { bgcolor: 'grey.800' },
+                    }}
+                  >
+                    {orgSaving ? '保存中...' : '保存'}
+                  </Button>
+                </Box>
+              </>
+            )}
           </Box>
         </TabPanel>
 

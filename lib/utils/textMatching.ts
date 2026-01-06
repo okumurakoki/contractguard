@@ -109,6 +109,8 @@ export function containsNormalized(haystack: string, needle: string): boolean {
  */
 export interface MatchResult {
   tag: string;           // マッチしたHTMLタグ全体（例: <p>...</p>）
+  tagName: string;       // タグ名（例: 'p', 'h3', 'li'）
+  openTag: string;       // 開始タグ（例: '<p>'）
   innerText: string;     // タグ内のテキスト
   similarity: number;    // 類似度（0-100）
   startIndex: number;    // HTMLコンテンツ内の開始位置
@@ -137,10 +139,16 @@ export function findBestMatch(
       const innerText = match[1];
       const normalizedInner = normalizeText(innerText);
 
+      // 開始タグを抽出（例: <p class="..."> から <p class="..."> を取得）
+      const openTagMatch = fullMatch.match(new RegExp(`^<${tagName}[^>]*>`));
+      const openTag = openTagMatch ? openTagMatch[0] : `<${tagName}>`;
+
       // 完全一致チェック
       if (normalizedInner === normalizedTarget) {
         return {
           tag: fullMatch,
+          tagName,
+          openTag,
           innerText,
           similarity: 100,
           startIndex: match.index,
@@ -154,6 +162,8 @@ export function findBestMatch(
         if (!bestMatch || similarity > bestMatch.similarity) {
           bestMatch = {
             tag: fullMatch,
+            tagName,
+            openTag,
             innerText,
             similarity,
             startIndex: match.index,
@@ -170,6 +180,8 @@ export function findBestMatch(
         if (!bestMatch || similarity > bestMatch.similarity) {
           bestMatch = {
             tag: fullMatch,
+            tagName,
+            openTag,
             innerText,
             similarity,
             startIndex: match.index,
@@ -197,19 +209,23 @@ export function findByPrefix(
   if (prefix.length < 5) return null; // 短すぎる場合は検索しない
 
   const tagPatterns = [
-    /<h3[^>]*>([^<]*)<\/h3>/gi,
-    /<p[^>]*>([^<]*)<\/p>/gi,
-    /<li[^>]*>([^<]*)<\/li>/gi,
+    { regex: /<h3[^>]*>([^<]*)<\/h3>/gi, tagName: 'h3' },
+    { regex: /<p[^>]*>([^<]*)<\/p>/gi, tagName: 'p' },
+    { regex: /<li[^>]*>([^<]*)<\/li>/gi, tagName: 'li' },
   ];
 
   let bestMatch: MatchResult | null = null;
 
-  for (const regex of tagPatterns) {
+  for (const { regex, tagName } of tagPatterns) {
     let match;
     while ((match = regex.exec(htmlContent)) !== null) {
       const fullMatch = match[0];
       const innerText = match[1];
       const normalizedInner = normalizeText(innerText);
+
+      // 開始タグを抽出
+      const openTagMatch = fullMatch.match(new RegExp(`^<${tagName}[^>]*>`));
+      const openTag = openTagMatch ? openTagMatch[0] : `<${tagName}>`;
 
       if (normalizedInner.startsWith(prefix)) {
         const similarity = calculateSimilarity(normalizedInner, normalizeText(targetText));
@@ -217,6 +233,8 @@ export function findByPrefix(
           if (!bestMatch || similarity > bestMatch.similarity) {
             bestMatch = {
               tag: fullMatch,
+              tagName,
+              openTag,
               innerText,
               similarity,
               startIndex: match.index,

@@ -45,6 +45,7 @@ import {
   Gavel as GavelIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 
 const DRAWER_WIDTH = 260;
@@ -62,9 +63,12 @@ const navItems: NavItem[] = [
   { title: '契約書一覧', path: '/contracts', icon: <DescriptionIcon />, section: 'main' },
   { title: 'アップロード', path: '/upload', icon: <UploadIcon />, section: 'main' },
   { title: 'フォルダ', path: '/folders', icon: <FolderIcon />, section: 'main' },
+  { title: '取引先', path: '/counterparties', icon: <BusinessIcon />, section: 'main' },
   { title: 'テンプレート', path: '/templates', icon: <TemplateIcon />, section: 'main' },
   { title: '契約書作成支援', path: '/lawyer', icon: <GavelIcon />, section: 'main' },
+  { title: '弁護士相談', path: '/lawyer/consultation', icon: <GavelIcon />, section: 'main' },
   { title: 'チーム', path: '/team', icon: <PeopleIcon />, section: 'settings' },
+  { title: '通知設定', path: '/settings/notifications', icon: <NotificationsIcon />, section: 'settings' },
   { title: '監査ログ', path: '/settings/audit-logs', icon: <SecurityIcon />, section: 'settings' },
   { title: '設定', path: '/settings', icon: <SettingsIcon />, section: 'settings' },
 ];
@@ -598,9 +602,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         component="main"
         sx={{
           flexGrow: 1,
-          p: 4,
+          p: { xs: 2, sm: 3, md: 4 },
           width: { sm: `calc(100% - ${currentDrawerWidth}px)` },
-          mt: 8,
+          mt: { xs: 7, sm: 8 },
           minHeight: '100vh',
           bgcolor: '#fafafa',
           transition: 'width 0.2s ease',
@@ -615,11 +619,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onClose={handleSearchClose}
         maxWidth="md"
         fullWidth
+        fullScreen={typeof window !== 'undefined' && window.innerWidth < 600}
         PaperProps={{
           sx: {
-            borderRadius: 2,
-            maxHeight: '80vh',
-            border: '1px solid #e4e4e7',
+            borderRadius: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100vh', sm: '80vh' },
+            border: { xs: 'none', sm: '1px solid #e4e4e7' },
           },
         }}
       >

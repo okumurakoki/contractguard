@@ -1,92 +1,184 @@
 # ContractGuard 開発進捗と今後のタスク
 
-最終更新: 2026年1月4日
+最終更新: 2026年1月5日
 
 ## 📊 本セッションで実装した内容
 
-### ✅ 1. AI提案の反映精度向上
+### ✅ 1. PDF抽出の改善
 
 #### 実装内容
-- **新規ファイル**: `lib/utils/textMatching.ts`
-  - 強力なテキスト正規化（空白、改行、全角半角、句読点の統一）
-  - Levenshtein距離アルゴリズムによる類似度計算
-  - ファジーマッチング機能（70%以上の類似度でマッチ）
-  - 前方一致フォールバック検索
+- **改善ファイル**: `lib/pdf/extract.ts`
+  - OCR対応（Tesseract.jsによるスキャンPDFのテキスト抽出）
+  - 表形式の認識と HTML table タグへの変換
+  - ヘッダー・フッターの除去機能
+  - 段組みレイアウトの正規化
 
-- **改善ファイル**: `app/(dashboard)/contracts/[id]/page.tsx`
-  - 従来の単純な文字列置換→ファジーマッチングに変更
-  - 段階的なフォールバック戦略
-  - デバッグモード追加
-
-- **改善ファイル**: `lib/ai/analyze.ts`
-  - AIプロンプトの改善（originalText抽出ルールの明確化）
-  - モック分析データの改善
+- **新規テスト**: `lib/pdf/__tests__/extract.test.ts` (18テスト)
+  - extractTextFromPdf, detectAndConvertTables
+  - removeHeadersAndFooters, normalizeColumnLayout
 
 #### 成果
-- **反映成功率**: 50-60% → **90%以上**に向上
-- PDFテキスト抽出とAI認識のズレを解消
-- より正確な位置に修正案が適用される
+- スキャンした契約書もOCRで分析可能に
+- 表形式の契約条項を正確に認識
+- より多様な契約書フォーマットに対応
 
 ---
 
-### ✅ 2. エディタUX改善
+### ✅ 2. 弁護士相談機能
 
 #### 実装内容
-- **新規ファイル**: `lib/utils/editorUtils.ts`
-  - カーソル位置の保存・復元（相対的な文字オフセットで管理）
-  - デバウンス関数（500ms）
-  - スロットル関数
-  - HistoryManagerクラス（履歴管理、最大50エントリ）
+- **Prismaスキーマ追加**: `prisma/schema.prisma`
+  - Lawyer, LawyerAvailability, LawyerReview モデル
 
-- **改善ファイル**: `components/editor/ContractEditor.tsx`
-  - IME入力時のカーソル位置復元
-  - requestAnimationFrameでDOM更新を待つ
-  - デバウンス処理でUndo/Redo履歴の肥大化を防止
-  - canUndo/canRedoの状態管理
+- **APIエンドポイント**:
+  - `app/api/lawyers/route.ts` - 弁護士一覧
+  - `app/api/lawyers/[id]/route.ts` - 弁護士詳細
+  - `app/api/consultations/route.ts` - 相談予約
+
+- **フロントエンド**:
+  - `app/(dashboard)/lawyer/consultation/page.tsx` - 相談予約ページ
+  - 専門分野フィルタリング、評価表示、予約ダイアログ
 
 #### 成果
-- **IME入力**: 日本語入力時のカーソルジャンプなし
-- **カーソル位置**: コンテンツ更新後も正確な位置を維持
-- **Undo/Redo**: メモリ使用量を大幅削減、Ctrl+Z/Ctrl+Shift+Zが確実に動作
-- **全体のUX**: エディタの応答性とパフォーマンスが向上
+- 弁護士検索・フィルタリング機能
+- 相談予約システム（カレンダーUI）
+- 弁護士評価・レビュー表示
 
 ---
 
-### ✅ 3. テスト追加（ユニットテスト）
+### ✅ 3. レポート機能（分析結果のPDF出力）
 
 #### 実装内容
-- **テストフレームワーク**: Vitest + Testing Library
-  - `vitest.config.ts`: Vitest設定
-  - `vitest.setup.ts`: テストセットアップ
-  - `package.json`: テストスクリプト追加
+- **依存関係追加**: jspdf, jspdf-autotable
 
-- **テストファイル**:
-  - `lib/utils/__tests__/textMatching.test.ts` (26テスト)
-    - normalizeText, levenshteinDistance, calculateSimilarity
-    - containsNormalized, findBestMatch, findByPrefix
+- **APIエンドポイント**: `app/api/contracts/[id]/report/route.ts`
+  - 契約書基本情報
+  - リスクサマリー（高・中・低リスク件数）
+  - 検出されたリスク詳細テーブル
+  - 日本語フォント対応
 
-  - `lib/utils/__tests__/editorUtils.test.ts` (13テスト)
-    - HistoryManager (Undo/Redo, 履歴制限)
-    - debounce, throttle
+- **フロントエンド**: `app/(dashboard)/contracts/[id]/page.tsx`
+  - PDFダウンロードボタン追加
+
+#### 成果
+- ワンクリックでPDFレポートをダウンロード
+- 専門的な分析レポートを生成
+
+---
+
+### ✅ 4. 比較機能（バージョン間差分表示）
+
+#### 実装内容
+- **依存関係追加**: diff-match-patch
+
+- **ユーティリティ**: `lib/compare/diff.ts`
+  - computeDiff, computeDiffStats
+  - stripHtml, diffToHtml
+  - computeLineDiff, calculateSimilarity
+
+- **フロントエンド**: `app/(dashboard)/contracts/compare/page.tsx`
+  - 2つの契約書を選択して比較
+  - バージョン間差分表示
+  - 差分ハイライト（追加: 緑、削除: 赤）
+  - 類似度パーセンテージ表示
+
+- **テスト**: `lib/compare/__tests__/diff.test.ts` (24テスト)
+
+#### 成果
+- 契約書のバージョン間差分を視覚的に確認可能
+- 変更箇所の統計情報を表示
+
+---
+
+### ✅ 5. 通知機能
+
+#### 実装内容
+- **メール通知**: `lib/notifications/email.ts`
+  - Resend APIによるメール送信
+  - 分析完了通知、相談リマインダー、契約期限通知
+
+- **ブラウザ通知**: `lib/notifications/browser.ts`
+  - Web Notification API
+  - 高リスク検出時の通知
+  - 相談リマインダー通知
+
+- **設定ページ**: `app/(dashboard)/settings/notifications/page.tsx`
+  - メール通知のオン/オフ
+  - ブラウザ通知の許可リクエスト
+  - 通知タイプごとの設定
+
+- **テスト**: `lib/notifications/__tests__/browser.test.ts` (7テスト)
+
+#### 成果
+- AI分析完了時に自動通知
+- 重要なリスク検出時にブラウザ通知
+- 相談予約のリマインダー機能
+
+---
+
+### ✅ 6. モバイル対応
+
+#### 実装内容
+- **グローバルスタイル**: `app/globals.css`
+  - レスポンシブデザイン改善
+  - タッチ操作最適化（min-height: 44px）
+  - iOSズーム防止（font-size: 16px）
+  - テーブルスクロール対応
+
+- **ナビゲーション**: `components/layout/DashboardLayout.tsx`
+  - モバイルメニューの改善
+  - 新機能へのナビゲーション追加
+
+#### 成果
+- スマートフォン・タブレットで快適に使用可能
+- タッチ操作に最適化されたUI
+
+---
+
+### ✅ 7. テストカバレッジ拡充
+
+#### 実装内容
+- **新規テストファイル**:
+  - `lib/pdf/__tests__/extract.test.ts` (18テスト)
+  - `lib/compare/__tests__/diff.test.ts` (24テスト)
+  - `lib/notifications/__tests__/browser.test.ts` (7テスト)
 
 #### テスト結果
 ```
-Test Files  2 passed (2)
-Tests      39 passed (39)
-Duration   1.19s
+Test Files  5 passed (5)
+Tests      88 passed (88)
+Duration   1.30s
 ```
 
-#### テストコマンド
-```bash
-# テスト実行
-npm test
+---
 
-# UIモードでテスト実行
-npm test:ui
+### ✅ 8. エディタパフォーマンス改善
 
-# カバレッジレポート生成
-npm test:coverage
-```
+#### 実装内容
+- **コンポーネントのメモ化**: `components/editor/ContractEditor.tsx`
+  - `SortableArticleItem` → `React.memo`
+  - `SortableEditorArticle` → `React.memo`
+
+- **ハンドラーのメモ化**:
+  - `handleArticleContentChange` → `useCallback`
+  - `handleDragEnd` → `useCallback`
+  - `handleJumpToArticle` → `useCallback`
+  - `handleInsertTemplate` → `useCallback`
+
+- **計算結果のメモ化**:
+  - スタイルオブジェクト → `useMemo`
+  - `articleIds` → `useMemo`
+  - `contentHtml` → `useMemo`
+
+- **デバウンス追加**:
+  - コンテンツパース → 100msデバウンス
+  - `onChange` → 150msデバウンス
+  - 重複パースのスキップ
+
+#### 成果
+- 入力時の再レンダリングを大幅削減
+- 長い契約書での編集がスムーズに
+- メモリ使用量の最適化
 
 ---
 
@@ -112,6 +204,13 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 # Clerk (認証)
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_key
 CLERK_SECRET_KEY=your_clerk_secret
+
+# Resend (メール通知)
+RESEND_API_KEY=your_resend_key
+
+# Stripe (決済)
+STRIPE_SECRET_KEY=your_stripe_secret
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable
 ```
 
 ### 開発サーバー起動
@@ -121,6 +220,9 @@ npm install
 
 # Prisma クライアント生成
 npx prisma generate
+
+# データベースマイグレーション（本番環境接続時）
+npx prisma migrate deploy
 
 # 開発サーバー起動
 npm run dev
@@ -139,195 +241,68 @@ npm start
 
 ## 📋 今後の実装タスク（優先度順）
 
-### 🔴 高優先度（残り）
-なし（すべて完了）
+### 🔴 高優先度
+なし（主要機能すべて完了）
 
 ### 🟡 中優先度
 
-#### 1. PDF抽出の改善
-**ファイル**: `lib/pdf/extract.ts`
+#### 1. E2Eテスト追加
+**ツール**: Playwright または Cypress
 
 **実装内容**:
-- [ ] OCR対応（スキャンPDFのテキスト抽出）
-  - Tesseract.js または PDF.js OCR の導入
-  - 画像ベースのPDFからテキスト抽出
-- [ ] 表形式の認識
-  - 表を構造化データとして抽出
-  - HTML tableタグで再現
-- [ ] より複雑なレイアウトへの対応
-  - 段組みレイアウトの認識
-  - ヘッダー・フッターの除外
+- [ ] ユーザー登録・ログインフロー
+- [ ] 契約書アップロード→分析→編集フロー
+- [ ] 弁護士相談予約フロー
+- [ ] レポートダウンロードフロー
 
-**期待される効果**:
-- スキャンした契約書も分析可能に
-- 表形式の契約条項を正確に認識
-- より多様な契約書フォーマットに対応
-
-#### 2. 弁護士相談機能
-**ファイル**: `app/(dashboard)/lawyer/page.tsx`（新規作成）
-
+#### 2. リアルタイムチャット機能
 **実装内容**:
-- [ ] 弁護士リストページ
-  - 専門分野、評価、料金の表示
-  - フィルタリング・検索機能
-- [ ] 相談予約システム
-  - カレンダーUI
-  - 予約時間の選択
-  - 通知機能（メール/Webhook）
-- [ ] 相談履歴
-  - 過去の相談記録
-  - 添付ファイル管理
-- [ ] チャット機能（オプション）
-  - リアルタイムチャット
-  - ファイル共有
+- [ ] 弁護士とのリアルタイムチャット
+- [ ] ファイル共有機能
+- [ ] WebSocket または Supabase Realtime 使用
 
-**データベーススキーマ追加**:
-```prisma
-model Lawyer {
-  id              String   @id @default(cuid())
-  name            String
-  specialization  String[] // 専門分野
-  rating          Float
-  hourlyRate      Int
-  bio             String?
-  imageUrl        String?
-  consultations   Consultation[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-}
-
-model Consultation {
-  id              String   @id @default(cuid())
-  userId          String
-  lawyerId        String
-  contractId      String?
-  scheduledAt     DateTime
-  duration        Int      // 分
-  status          String   // pending, confirmed, completed, cancelled
-  notes           String?
-  user            User     @relation(fields: [userId], references: [id])
-  lawyer          Lawyer   @relation(fields: [lawyerId], references: [id])
-  contract        Contract? @relation(fields: [contractId], references: [id])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-}
-```
-
-#### 3. レポート機能（分析結果のPDF出力）
-**ファイル**: `app/api/contracts/[id]/report/route.ts`（新規作成）
-
+#### 3. AI分析のさらなる改善
 **実装内容**:
-- [ ] レポートテンプレート作成
-  - 契約書基本情報
-  - リスクサマリー
-  - 検出されたリスク詳細
-  - チェックリスト結果
-  - 修正推奨事項
-- [ ] PDF生成機能
-  - jsPDF または Puppeteer を使用
-  - グラフ・チャートの埋め込み（リスク分布など）
-  - ブランディング（ロゴ、カラー）
-- [ ] ダウンロード機能
-  - ワンクリックでPDFダウンロード
-  - メール送信機能（オプション）
-
-**実装例**:
-```typescript
-// app/api/contracts/[id]/report/route.ts
-import { jsPDF } from 'jspdf';
-
-export async function GET(request: Request, { params }: { params: { id: string } }) {
-  const contract = await prisma.contract.findUnique({
-    where: { id: params.id },
-    include: { review: { include: { riskItems: true } } }
-  });
-
-  const doc = new jsPDF();
-
-  // タイトル
-  doc.setFontSize(20);
-  doc.text('契約書分析レポート', 20, 20);
-
-  // 基本情報
-  doc.setFontSize(12);
-  doc.text(`契約書名: ${contract.contractTitle}`, 20, 40);
-  doc.text(`契約種別: ${contract.contractType}`, 20, 50);
-  doc.text(`総合スコア: ${contract.review?.overallScore || 'N/A'}`, 20, 60);
-
-  // リスク詳細
-  // ...
-
-  return new Response(doc.output('arraybuffer'), {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${contract.contractTitle}_report.pdf"`,
-    },
-  });
-}
-```
+- [ ] 複数のAIモデル対応（GPT-4, Gemini等）
+- [ ] カスタムプロンプトテンプレート
+- [ ] 業界別の分析ルール設定
 
 ---
 
 ### 🔵 低優先度
 
-#### 4. 比較機能（バージョン間差分表示）
-**ファイル**: `app/(dashboard)/contracts/compare/page.tsx`
+#### 4. 多言語対応
+- [ ] i18n対応（英語、中国語等）
+- [ ] 契約書の言語自動検出
 
-**実装内容**:
-- [ ] バージョン選択UI
-  - 2つのバージョンを選択
-  - サイドバイサイド表示
-- [ ] 差分ハイライト
-  - 追加箇所: 緑色
-  - 削除箇所: 赤色
-  - 変更箇所: 黄色
-- [ ] 差分アルゴリズム
-  - diff-match-patch ライブラリ使用
-  - 文単位、段落単位の比較
+#### 5. ダッシュボード分析強化
+- [ ] 契約書統計グラフ
+- [ ] リスクトレンド分析
+- [ ] チームパフォーマンス指標
 
-#### 5. 通知機能
-**実装内容**:
-- [ ] メール通知
-  - Resend または SendGrid
-  - AI分析完了通知
-  - 弁護士相談リマインダー
-- [ ] ブラウザ通知
-  - Web Push API
-  - 重要なリスク検出時の通知
-
-#### 6. モバイル対応
-**実装内容**:
-- [ ] レスポンシブデザインの改善
-- [ ] タッチ操作の最適化
-- [ ] モバイル専用UI（オプション）
+#### 6. API公開
+- [ ] REST API ドキュメント
+- [ ] APIキー管理機能
+- [ ] レート制限
 
 ---
 
 ## 🐛 既知の問題・改善点
 
-### 1. AI提案の反映精度
-**現状**: 90%以上の成功率
+### 1. middleware警告
+**現状**: Next.js 16で`middleware.ts`が非推奨
+```
+The "middleware" file convention is deprecated. Please use "proxy" instead.
+```
+**対応**: 将来的に`proxy.ts`への移行が必要（現状動作に問題なし）
 
-**さらなる改善案**:
-- 形態素解析の導入（意味レベルでのマッチング）
-- AIに渡すテキストとHTML内テキストの完全な統一
-- ユーザーフィードバック機能（反映失敗時に手動選択できるUI）
+### 2. Lint警告
+**現状**: 54件の警告（主に未使用インポート・変数）
+**対応**: 機能に影響なし、必要に応じて順次対応
 
-### 2. エディタのパフォーマンス
-**現状**: 中程度の契約書（10-20ページ）で快適に動作
-
-**改善案**:
-- 大きな契約書（50ページ以上）での仮想スクロール
-- WebWorkerを使用した並列処理
-- コンテンツの遅延ロード
-
-### 3. テストカバレッジ
-**現状**: ユーティリティ関数のみテスト済み
-
-**今後の追加**:
-- コンポーネントテスト（ContractEditor, RiskCard等）
-- API統合テスト（/api/contracts/[id]/analyze等）
-- E2Eテスト（Playwright/Cypress）
+### 3. DBマイグレーション
+**現状**: Lawyer関連モデルのマイグレーション未実行
+**対応**: 本番環境接続時に`npx prisma migrate deploy`を実行
 
 ---
 
@@ -339,14 +314,18 @@ export async function GET(request: Request, { params }: { params: { id: string }
 - **AI**: Anthropic Claude API
 - **認証**: Clerk
 - **決済**: Stripe
-- **PDF処理**: unpdf, html2pdf.js
+- **PDF処理**: unpdf, jsPDF, Tesseract.js
+- **差分比較**: diff-match-patch
+- **メール**: Resend
 - **テスト**: Vitest, Testing Library
+- **ドラッグ&ドロップ**: @dnd-kit
 
 ### ドキュメント
 - [Next.js Documentation](https://nextjs.org/docs)
 - [Anthropic API Documentation](https://docs.anthropic.com/)
 - [Prisma Documentation](https://www.prisma.io/docs)
 - [Vitest Documentation](https://vitest.dev/)
+- [Resend Documentation](https://resend.com/docs)
 
 ---
 
@@ -372,6 +351,7 @@ Vercel ダッシュボード → Settings → Environment Variables
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
+- `RESEND_API_KEY`
 
 ---
 
@@ -421,7 +401,8 @@ PORT=3001 npm run dev
 ### 環境確認
 - [ ] `npm install` で依存関係をインストール
 - [ ] `.env.local` が設定されているか確認
-- [ ] `npm test` でテストが通るか確認
+- [ ] `npm test` でテストが通るか確認（88テスト）
+- [ ] `npm run build` でビルドが成功するか確認
 - [ ] `npm run dev` で開発サーバーが起動するか確認
 
 ### 次のタスク選択
@@ -434,6 +415,25 @@ PORT=3001 npm run dev
 - [ ] `npm run build` でビルドが成功することを確認
 - [ ] DEVELOPMENT_LOG.md を更新
 - [ ] このファイル（PROGRESS_AND_TODO.md）を更新
+
+---
+
+## 📈 実装済み機能一覧
+
+| 機能 | ステータス | 備考 |
+|------|-----------|------|
+| AI契約書分析 | ✅ 完了 | Claude API使用 |
+| ファジーマッチング | ✅ 完了 | 90%以上の精度 |
+| エディタ（IME対応） | ✅ 完了 | カーソル位置復元 |
+| Undo/Redo | ✅ 完了 | 履歴管理最適化 |
+| PDF抽出（OCR対応） | ✅ 完了 | Tesseract.js |
+| 弁護士相談機能 | ✅ 完了 | 予約システム含む |
+| レポート出力 | ✅ 完了 | PDF生成 |
+| バージョン比較 | ✅ 完了 | diff-match-patch |
+| 通知機能 | ✅ 完了 | メール + ブラウザ |
+| モバイル対応 | ✅ 完了 | レスポンシブ |
+| テスト | ✅ 完了 | 88テスト |
+| エディタ最適化 | ✅ 完了 | React.memo等 |
 
 ---
 

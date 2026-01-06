@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   Box,
   Typography,
@@ -21,6 +21,13 @@ import {
   Alert,
   CircularProgress,
   Skeleton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Stepper,
+  Step,
+  StepLabel,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
@@ -29,6 +36,8 @@ import {
   CheckCircle as CheckIcon,
   Info as InfoIcon,
   Edit as EditIcon,
+  Business as BusinessIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 
@@ -53,6 +62,15 @@ interface Template {
   updatedAt: string;
 }
 
+interface Counterparty {
+  id: string;
+  name: string;
+  shortName: string | null;
+  address: string | null;
+  representative: string | null;
+  repTitle: string | null;
+}
+
 // コンテンツから条項を抽出
 function extractSections(content: string): Array<{ number: number; title: string; content: string }> {
   const sections: Array<{ number: number; title: string; content: string }> = [];
@@ -75,18 +93,75 @@ function extractSections(content: string): Array<{ number: number; title: string
 export default function TemplateDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const templateId = params.id as string;
 
   const [template, setTemplate] = React.useState<Template | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // ダイアログ関連
   const [useDialogOpen, setUseDialogOpen] = React.useState(false);
-  const [counterparty, setCounterparty] = React.useState('');
+  const [activeStep, setActiveStep] = React.useState(0);
+
+  // 取引先関連
+  const [counterparties, setCounterparties] = React.useState<Counterparty[]>([]);
+  const [loadingCounterparties, setLoadingCounterparties] = React.useState(false);
+  const [selectedCounterpartyId, setSelectedCounterpartyId] = React.useState('');
+  const [counterpartyName, setCounterpartyName] = React.useState('');
+  const [counterpartyInputMode, setCounterpartyInputMode] = React.useState<'select' | 'manual'>('select');
+
+  // 変数入力
   const [variableValues, setVariableValues] = React.useState<Record<string, string>>({});
   const [customNotes, setCustomNotes] = React.useState('');
   const [success, setSuccess] = React.useState('');
   const [generating, setGenerating] = React.useState(false);
+
+  const steps = ['取引先を選択', '詳細を入力', '確認'];
+
+  // 取引先一覧を取得
+  const fetchCounterparties = async () => {
+    try {
+      setLoadingCounterparties(true);
+      const response = await fetch('/api/counterparties');
+      if (response.ok) {
+        const data = await response.json();
+        setCounterparties(data.counterparties || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch counterparties:', err);
+    } finally {
+      setLoadingCounterparties(false);
+    }
+  };
+
+  // URLパラメータで自動的にダイアログを開く
+  React.useEffect(() => {
+    if (searchParams.get('use') === 'true' && template && !useDialogOpen) {
+      setUseDialogOpen(true);
+      fetchCounterparties();
+    }
+  }, [searchParams, template]);
+
+  // ダイアログを開くときに取引先を取得
+  const handleOpenDialog = () => {
+    setUseDialogOpen(true);
+    setActiveStep(0);
+    setSelectedCounterpartyId('');
+    setCounterpartyName('');
+    setVariableValues({});
+    setCustomNotes('');
+    fetchCounterparties();
+  };
+
+  // 選択された取引先名を取得
+  const getSelectedCounterpartyName = () => {
+    if (counterpartyInputMode === 'manual') {
+      return counterpartyName;
+    }
+    const selected = counterparties.find(c => c.id === selectedCounterpartyId);
+    return selected?.name || '';
+  };
 
   // テンプレート詳細を取得
   React.useEffect(() => {
@@ -132,7 +207,8 @@ export default function TemplateDetailPage() {
   }, [templateId]);
 
   const handleUseTemplate = async () => {
-    if (!counterparty.trim()) {
+    const counterpartyNameToUse = getSelectedCounterpartyName();
+    if (!counterpartyNameToUse.trim()) {
       return;
     }
 
@@ -144,7 +220,8 @@ export default function TemplateDetailPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          counterparty,
+          counterparty: counterpartyNameToUse,
+          counterpartyId: counterpartyInputMode === 'select' ? selectedCounterpartyId : null,
           variables: variableValues,
           notes: customNotes,
         }),
@@ -168,6 +245,32 @@ export default function TemplateDetailPage() {
       setError('契約書の生成に失敗しました');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // 次のステップに進めるかチェック
+  const canProceedToNextStep = () => {
+    if (activeStep === 0) {
+      if (counterpartyInputMode === 'select') {
+        return selectedCounterpartyId !== '';
+      } else {
+        return counterpartyName.trim() !== '';
+      }
+    }
+    return true;
+  };
+
+  // ステップを進める
+  const handleNext = () => {
+    if (activeStep < steps.length - 1) {
+      setActiveStep(activeStep + 1);
+    }
+  };
+
+  // ステップを戻る
+  const handleBack = () => {
+    if (activeStep > 0) {
+      setActiveStep(activeStep - 1);
     }
   };
 
@@ -257,12 +360,12 @@ export default function TemplateDetailPage() {
             <Button
               variant="contained"
               startIcon={<EditIcon />}
-              onClick={() => setUseDialogOpen(true)}
+              onClick={handleOpenDialog}
               sx={{
-                bgcolor: 'black',
+                bgcolor: '#1e40af',
                 color: 'white',
                 px: 3,
-                '&:hover': { bgcolor: 'grey.800' },
+                '&:hover': { bgcolor: '#1e3a8a' },
               }}
             >
               このテンプレートを使う
@@ -357,13 +460,13 @@ export default function TemplateDetailPage() {
               fullWidth
               size="large"
               startIcon={<EditIcon />}
-              onClick={() => setUseDialogOpen(true)}
+              onClick={handleOpenDialog}
               sx={{
-                bgcolor: 'black',
+                bgcolor: '#1e40af',
                 color: 'white',
                 py: 1.5,
                 mb: 2,
-                '&:hover': { bgcolor: 'grey.800' },
+                '&:hover': { bgcolor: '#1e3a8a' },
               }}
             >
               このテンプレートを使う
@@ -389,70 +492,240 @@ export default function TemplateDetailPage() {
       <Dialog open={useDialogOpen} onClose={() => !generating && setUseDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>テンプレートから契約書を作成</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            テンプレート: <strong>{template.title}</strong>
-          </Typography>
+          <Stepper activeStep={activeStep} sx={{ mb: 3 }}>
+            {steps.map((label) => (
+              <Step key={label}>
+                <StepLabel>{label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
 
-          <Box sx={{ display: 'grid', gap: 3 }}>
-            <TextField
-              label="契約相手（社名・氏名）"
-              required
-              fullWidth
-              value={counterparty}
-              onChange={(e) => setCounterparty(e.target.value)}
-              placeholder="例：株式会社ABC"
-              autoFocus
-              disabled={generating}
-            />
+          {/* Step 0: 取引先選択 */}
+          {activeStep === 0 && (
+            <Box sx={{ display: 'grid', gap: 3 }}>
+              <Alert severity="info" icon={<BusinessIcon />}>
+                契約を結ぶ取引先を選択してください
+              </Alert>
 
-            {template.variables.map((variable) => (
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant={counterpartyInputMode === 'select' ? 'contained' : 'outlined'}
+                  onClick={() => setCounterpartyInputMode('select')}
+                  sx={{
+                    flex: 1,
+                    bgcolor: counterpartyInputMode === 'select' ? '#1e40af' : 'transparent',
+                    color: counterpartyInputMode === 'select' ? 'white' : '#1e40af',
+                    borderColor: '#1e40af',
+                    '&:hover': {
+                      bgcolor: counterpartyInputMode === 'select' ? '#1e3a8a' : '#eff6ff',
+                    },
+                  }}
+                >
+                  登録済み取引先
+                </Button>
+                <Button
+                  variant={counterpartyInputMode === 'manual' ? 'contained' : 'outlined'}
+                  onClick={() => setCounterpartyInputMode('manual')}
+                  sx={{
+                    flex: 1,
+                    bgcolor: counterpartyInputMode === 'manual' ? '#1e40af' : 'transparent',
+                    color: counterpartyInputMode === 'manual' ? 'white' : '#1e40af',
+                    borderColor: '#1e40af',
+                    '&:hover': {
+                      bgcolor: counterpartyInputMode === 'manual' ? '#1e3a8a' : '#eff6ff',
+                    },
+                  }}
+                >
+                  直接入力
+                </Button>
+              </Box>
+
+              {counterpartyInputMode === 'select' ? (
+                <>
+                  {loadingCounterparties ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                      <CircularProgress size={32} />
+                    </Box>
+                  ) : counterparties.length === 0 ? (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        登録済みの取引先がありません
+                      </Typography>
+                      <Button
+                        component={Link}
+                        href="/counterparties"
+                        variant="outlined"
+                        startIcon={<AddIcon />}
+                        sx={{ borderColor: '#1e40af', color: '#1e40af' }}
+                      >
+                        取引先を登録
+                      </Button>
+                    </Box>
+                  ) : (
+                    <FormControl fullWidth>
+                      <InputLabel>取引先を選択</InputLabel>
+                      <Select
+                        value={selectedCounterpartyId}
+                        label="取引先を選択"
+                        onChange={(e) => setSelectedCounterpartyId(e.target.value)}
+                      >
+                        {counterparties.map((cp) => (
+                          <MenuItem key={cp.id} value={cp.id}>
+                            <Box>
+                              <Typography>{cp.name}</Typography>
+                              {cp.shortName && (
+                                <Typography variant="caption" color="text.secondary">
+                                  {cp.shortName}
+                                </Typography>
+                              )}
+                            </Box>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
+                </>
+              ) : (
+                <TextField
+                  label="取引先名（社名・氏名）"
+                  required
+                  fullWidth
+                  value={counterpartyName}
+                  onChange={(e) => setCounterpartyName(e.target.value)}
+                  placeholder="例：株式会社ABC"
+                  autoFocus
+                />
+              )}
+            </Box>
+          )}
+
+          {/* Step 1: 詳細入力 */}
+          {activeStep === 1 && (
+            <Box sx={{ display: 'grid', gap: 3 }}>
+              <Alert severity="info">
+                取引先: <strong>{getSelectedCounterpartyName()}</strong>
+              </Alert>
+
+              {template.variables.length > 0 ? (
+                template.variables.map((variable) => (
+                  <TextField
+                    key={variable.name}
+                    label={variable.label}
+                    required={variable.required}
+                    fullWidth
+                    value={variableValues[variable.name] || ''}
+                    onChange={(e) => setVariableValues({
+                      ...variableValues,
+                      [variable.name]: e.target.value,
+                    })}
+                    placeholder={variable.placeholder}
+                    disabled={generating}
+                  />
+                ))
+              ) : (
+                <Alert severity="success">
+                  このテンプレートには追加の入力項目はありません
+                </Alert>
+              )}
+
               <TextField
-                key={variable.name}
-                label={variable.label}
-                required={variable.required}
+                label="備考・特記事項（オプション）"
                 fullWidth
-                value={variableValues[variable.name] || ''}
-                onChange={(e) => setVariableValues({
-                  ...variableValues,
-                  [variable.name]: e.target.value,
-                })}
-                placeholder={variable.placeholder}
+                multiline
+                rows={3}
+                value={customNotes}
+                onChange={(e) => setCustomNotes(e.target.value)}
+                placeholder="追加で記載したい内容があれば入力してください"
                 disabled={generating}
               />
-            ))}
+            </Box>
+          )}
 
-            <TextField
-              label="備考・特記事項"
-              fullWidth
-              multiline
-              rows={3}
-              value={customNotes}
-              onChange={(e) => setCustomNotes(e.target.value)}
-              placeholder="追加で記載したい内容があれば入力してください"
-              disabled={generating}
-            />
+          {/* Step 2: 確認 */}
+          {activeStep === 2 && (
+            <Box sx={{ display: 'grid', gap: 2 }}>
+              <Paper sx={{ p: 2, bgcolor: '#f9fafb', border: '1px solid', borderColor: 'grey.200' }}>
+                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+                  作成内容の確認
+                </Typography>
+                <Box sx={{ display: 'grid', gap: 1.5 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" color="text.secondary">テンプレート</Typography>
+                    <Typography variant="body2" fontWeight={600}>{template.title}</Typography>
+                  </Box>
+                  <Divider />
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" color="text.secondary">取引先</Typography>
+                    <Typography variant="body2" fontWeight={600}>{getSelectedCounterpartyName()}</Typography>
+                  </Box>
+                  {Object.entries(variableValues).filter(([, value]) => value).map(([key, value]) => (
+                    <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {template.variables.find(v => v.name === key)?.label || key}
+                      </Typography>
+                      <Typography variant="body2" fontWeight={600}>{value}</Typography>
+                    </Box>
+                  ))}
+                  {customNotes && (
+                    <>
+                      <Divider />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>備考</Typography>
+                        <Typography variant="body2">{customNotes}</Typography>
+                      </Box>
+                    </>
+                  )}
+                </Box>
+              </Paper>
 
-            <Alert severity="info">
-              テンプレートを元に契約書が作成されます。作成後、詳細を編集することができます。
-            </Alert>
-          </Box>
+              <Alert severity="info">
+                契約書を作成後、内容を編集・レビューできます
+              </Alert>
+            </Box>
+          )}
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setUseDialogOpen(false)} sx={{ color: 'grey.600' }} disabled={generating}>
+        <DialogActions sx={{ px: 3, pb: 2, justifyContent: 'space-between' }}>
+          <Button
+            onClick={() => setUseDialogOpen(false)}
+            sx={{ color: 'grey.600' }}
+            disabled={generating}
+          >
             キャンセル
           </Button>
-          <Button
-            onClick={handleUseTemplate}
-            variant="contained"
-            disabled={!counterparty.trim() || generating}
-            sx={{
-              bgcolor: 'black',
-              color: 'white',
-              '&:hover': { bgcolor: 'grey.800' },
-            }}
-          >
-            {generating ? <CircularProgress size={24} color="inherit" /> : '契約書を作成'}
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            {activeStep > 0 && (
+              <Button onClick={handleBack} disabled={generating}>
+                戻る
+              </Button>
+            )}
+            {activeStep < steps.length - 1 ? (
+              <Button
+                onClick={handleNext}
+                variant="contained"
+                disabled={!canProceedToNextStep()}
+                sx={{
+                  bgcolor: '#1e40af',
+                  color: 'white',
+                  '&:hover': { bgcolor: '#1e3a8a' },
+                }}
+              >
+                次へ
+              </Button>
+            ) : (
+              <Button
+                onClick={handleUseTemplate}
+                variant="contained"
+                disabled={generating}
+                sx={{
+                  bgcolor: '#1e40af',
+                  color: 'white',
+                  '&:hover': { bgcolor: '#1e3a8a' },
+                }}
+              >
+                {generating ? <CircularProgress size={24} color="inherit" /> : '契約書を作成'}
+              </Button>
+            )}
+          </Box>
         </DialogActions>
       </Dialog>
     </Box>

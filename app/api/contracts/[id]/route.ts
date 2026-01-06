@@ -44,6 +44,7 @@ export async function GET(
             email: true,
           },
         },
+        counterpartyRef: true,
       },
     });
 
@@ -90,7 +91,7 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { contractTitle, contractType, counterparty, expiryDate, tags, folderId, editedContent } = body;
+    const { contractTitle, contractType, counterparty, counterpartyId, ourPosition, expiryDate, tags, folderId, editedContent } = body;
 
     // 既存の契約書を取得
     const existingContract = await prisma.contract.findFirst({
@@ -130,6 +131,8 @@ export async function PATCH(
             ...(contractTitle && { contractTitle }),
             ...(contractType && { contractType }),
             ...(counterparty !== undefined && { counterparty }),
+            ...(counterpartyId !== undefined && { counterpartyId: counterpartyId || null }),
+            ...(ourPosition !== undefined && { ourPosition: ourPosition || null }),
             ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
             ...(tags && { tags }),
             ...(folderId !== undefined && { folderId }),
@@ -147,6 +150,8 @@ export async function PATCH(
           ...(contractTitle && { contractTitle }),
           ...(contractType && { contractType }),
           ...(counterparty !== undefined && { counterparty }),
+          ...(counterpartyId !== undefined && { counterpartyId: counterpartyId || null }),
+          ...(ourPosition !== undefined && { ourPosition: ourPosition || null }),
           ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
           ...(tags && { tags }),
           ...(folderId !== undefined && { folderId }),
